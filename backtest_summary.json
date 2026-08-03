@@ -1,0 +1,20 @@
+{
+  "initial_capital": 50000.0,
+  "final_capital": 65427.629407333574,
+  "gross_pnl": 30989.351615630952,
+  "net_pnl": 15427.629407333574,
+  "roi_pct": 30.855258814667145,
+  "total_points_captured": 309893.5161563094,
+  "total_trades": 1259,
+  "wins": 830,
+  "losses": 429,
+  "win_rate_pct": 65.9253375694996,
+  "avg_pnl_per_trade": 17.402753714611226,
+  "max_drawdown_usd": 613.3873355486357,
+  "max_drawdown_pct": 1.064109929130044,
+  "profit_factor": 5.1211811617159695,
+  "total_exchange_fees": 7705.071515441545,
+  "total_gst_paid": 1386.9128727794784,
+  "total_funding_accrual": 12.699699285600005,
+  "total_fee_drag": 9079.284688935422
+}
