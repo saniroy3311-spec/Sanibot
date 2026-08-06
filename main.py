@@ -116,7 +116,7 @@ class ShivaSniperBot:
         # )
 
         # ALERT_QTY (.env) is now the single source of truth for trade size.
-        self._qty_lots = ALERT_QTY
+        self._qty_lots = ALERT_QTY // 100
 
         _dashboard.init(self._journal)
         self._trail_mon = TrailMonitor(
@@ -823,8 +823,8 @@ class ShivaSniperBot:
         )
         self._fills_feed.start_task()
 
-        _dashboard.start()
-        _start_client_dashboard()
+#         _dashboard.start()
+#         _start_client_dashboard()
         try:
             await feed.start()
         except asyncio.CancelledError:
