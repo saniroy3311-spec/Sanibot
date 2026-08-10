@@ -387,7 +387,7 @@ TRAIL_ARM_USE_TRIGGER = os.environ.get("TRAIL_ARM_USE_TRIGGER", "true").lower() 
 TIME_EXIT_MINUTES = int(os.environ.get("TIME_EXIT_MINUTES", "0"))
 
 # Pine: beMult=0.6
-BE_MULT = 0.4  # EXACT_23K
+BE_MULT = float(os.environ.get("BE_MULT", "0.4"))  # EXACT_23K
 RSI_OB  = int(os.environ.get("RSI_OB", "70"))
 RSI_OS  = int(os.environ.get("RSI_OS", "30"))
 BREAKOUT_BUFFER_PTS = float(os.environ.get("BREAKOUT_BUFFER_PTS", "0"))
@@ -525,30 +525,30 @@ MAX_EXIT_SLIPPAGE_ATR_PCT = float(os.environ.get("MAX_EXIT_SLIPPAGE_ATR_PCT", "2
 # ──────────────────────────────────────────────────────────────────────
 # ADX Filter — block entries in low-trend markets (chop/sideways)
 # Pine uses ADX to distinguish trend vs range. Higher = stricter trend requirement.
-OPT_ADX_TREND_TH       = 28  # TARGETED_OPT
-OPT_ADX_RANGE_TH       = 15  # TARGETED_OPT
-OPT_ADX_MIN_FILTER     = 24  # TARGETED_OPT
+OPT_ADX_TREND_TH       = float(os.environ.get("OPT_ADX_TREND_TH", "28"))
+OPT_ADX_RANGE_TH       = float(os.environ.get("OPT_ADX_RANGE_TH", "15"))
+OPT_ADX_MIN_FILTER     = float(os.environ.get("OPT_ADX_MIN_FILTER", "24"))
 
 # Higher Timeframe Trend Filter (4H 200 EMA)
 # Only take 30m trades in direction of 4H macro trend
 OPT_HTF_TREND_ENABLED  = os.environ.get("OPT_HTF_TREND_ENABLED", "true").lower() == "true"
-OPT_HTF_EMA_LEN        = 200  # TARGETED_OPT
-OPT_HTF_TIMEFRAME      = "4h"  # OPTIMIZED
+OPT_HTF_EMA_LEN        = int(os.environ.get("OPT_HTF_EMA_LEN", "200"))
+OPT_HTF_TIMEFRAME      = os.environ.get("OPT_HTF_TIMEFRAME", "4h")
 
 # EMA Crossover Tuning (Fast/Slow on 30m)
-OPT_EMA_FAST_LEN       = 10  # TARGETED_OPT
-OPT_EMA_SLOW_LEN       = 160  # TARGETED_OPT
+OPT_EMA_FAST_LEN       = int(os.environ.get("OPT_EMA_FAST_LEN", "10"))
+OPT_EMA_SLOW_LEN       = int(os.environ.get("OPT_EMA_SLOW_LEN", "160"))
 
 # ATR Minimum Volatility Filter — avoid low-vol "papercut" trades
-OPT_ATR_MIN_FILTER     = 120.0  # TARGETED_OPT  # 0 = disabled, >0 = minimum ATR points
-OPT_ATR_MIN_PCT        = 0.0012  # TARGETED_OPT     # Or as % of price (e.g., 0.001 = 0.1%)
+OPT_ATR_MIN_FILTER     = float(os.environ.get("OPT_ATR_MIN_FILTER", "120.0"))
+OPT_ATR_MIN_PCT        = float(os.environ.get("OPT_ATR_MIN_PCT", "0.0012"))
 
 # Initial Stop Loss % (as % of entry price) — overrides ATR-based SL when > 0
-OPT_INITIAL_SL_PCT     = 0.0045  # TARGETED_OPT  # 0 = use ATR-based, >0 = fixed %
+OPT_INITIAL_SL_PCT     = float(os.environ.get("OPT_INITIAL_SL_PCT", "0.0045"))
 
 # Trailing Stop Trigger Percentages (profit distance to activate Stage 1/2)
-OPT_TRAIL_TRIGGER_1_PCT = 0.006  # TARGETED_OPT  # Stage 1 activation % (0 = use TRAIL_STAGES)
-OPT_TRAIL_TRIGGER_2_PCT = 0.018  # TARGETED_OPT  # Stage 2 activation % (0 = use TRAIL_STAGES)
+OPT_TRAIL_TRIGGER_1_PCT = float(os.environ.get("OPT_TRAIL_TRIGGER_1_PCT", "0.006"))
+OPT_TRAIL_TRIGGER_2_PCT = float(os.environ.get("OPT_TRAIL_TRIGGER_2_PCT", "0.018"))
 
 # ─────────────────────────────────────
 # PARITY ALIASES  (flat constants for verification — do not use in logic)
