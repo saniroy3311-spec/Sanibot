@@ -47,7 +47,7 @@ from typing import Optional
 # ── Canonical module imports ───────────────────────────────────────────────────
 from config import (
     TELEGRAM_ENABLED,
-    SYMBOL, ALERT_QTY, CANDLE_TIMEFRAME, FILTER_VOL_ENABLED,
+    SYMBOL, ALERT_QTY, POSITION_BTC_SIZE, CANDLE_TIMEFRAME, FILTER_VOL_ENABLED,
     POSITION_BTC_SIZE, TREND_ATR_MULT, RANGE_ATR_MULT,
     ALLOW_REVERSAL,
 )
@@ -116,7 +116,7 @@ class ShivaSniperBot:
         # )
 
         # ALERT_QTY (.env) is now the single source of truth for trade size.
-        self._qty_lots = ALERT_QTY // 100
+        self._qty_lots = btc_to_lots(POSITION_BTC_SIZE)
 
         _dashboard.init(self._journal)
         self._trail_mon = TrailMonitor(
@@ -649,9 +649,11 @@ class ShivaSniperBot:
                 pass
 
             logger.info(
-                f"[ENTRY] Filled | type={sig.signal_type.value}  "
-                f"fill={fill:.2f}  sl={risk.sl:.2f}  tp={risk.tp:.2f}  "
-                f"atr={snap.atr:.2f}  stop_dist={risk.stop_dist:.2f}"
+                f"[ENTRY] Filled | type={sig.signal_type.value}  is_trend={sig.is_trend}  "
+                f"fill={fill:.2f}  signal_close={snap.close:.2f}  slip={slip:.2f}  "
+                f"sl={risk.sl:.2f}  tp={risk.tp:.2f}  "
+                f"atr={snap.atr:.2f}  stop_dist(anchor)={risk.stop_dist:.2f}  "
+                f"sl_gap_from_fill={abs(risk.sl - fill):.2f}"
             )
 
             try:
