@@ -31,3 +31,6 @@ clients.db
 dashboard/clients.db
 shadow_log.jsonl
 btc_30m*.csv
+.env
+.env.bak.*
+*.bak_*
