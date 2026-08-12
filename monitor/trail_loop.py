@@ -2002,22 +2002,58 @@ class TrailMonitor:
                 f"(last: {last_err}). ⚠️ MANUAL CHECK REQUIRED."
             )
 
-        reported_price = actual_fill_price if actual_fill_price is not None else exit_price
-        if actual_fill_price is not None and abs(actual_fill_price - exit_price)  > 1.0:
+        # ── FIX-25 (FABRICATED-EXIT-PRICE, take 2) ────────────────────────────
+        # create_order() for a Delta market order routinely comes back with no
+        # average/price yet — the fill posts a beat later. Before this fix,
+        # that meant `reported_price` silently fell back to `exit_price`, the
+        # SIGNAL/TRIGGER price (a trail-SL level, or — worse — a raw
+        # offset-adjusted Binance tick from _evaluate_tick_sl_only), not what
+        # actually filled on the exchange. Same bug class FIX-24 already fixed
+        # for silent bracket fires (_tick_loop ghost-trail-guard) — this is the
+        # bot-initiated close path, which never got the same verification.
+        # Fix: reuse FIX-24's verified /v2/fills lookup as a fallback here too.
+        verified_price = actual_fill_price
+        if success and verified_price is None:
+            verified_price = await self._fetch_bracket_fill_retry()
+            if verified_price is not None:
+                logger.info(f"[TRAIL] FIX-25: verified fill via /v2/fills @ {verified_price:.2f}")
+
+        reported_price = verified_price if verified_price is not None else exit_price
+
+        if verified_price is None:
+            logger.critical(
+                f"[TRAIL] ⚠️ FIX-25: could NOT verify the real fill price for this "
+                f"exit. Logging the SIGNAL price {exit_price:.2f} as an ESTIMATE — "
+                f"verify this trade's actual exit on Delta before trusting its P&L."
+            )
+            try:
+                if self._telegram is not None:
+                    await self._telegram.send(
+                        "⚠️ <b>Estimated exit price</b>\n"
+                        "Close order sent but the real fill could not be verified. "
+                        f"Logged <code>{exit_price:.2f}</code> as an ESTIMATE — "
+                        "check Delta before trusting this trade's P&L."
+                    )
+            except Exception:
+                pass
+        elif abs(reported_price - exit_price)  > 1.0:
             logger.info(
                 f"[TRAIL] Fill correction: signal={exit_price:.2f}  "
-                f"actual={actual_fill_price:.2f} diff={actual_fill_price - exit_price:+.2f} "
+                f"actual={reported_price:.2f} diff={reported_price - exit_price:+.2f} "
             )
 
         # ── Slippage guard ────────────────────────────────────────────────────
-        if actual_fill_price is not None and self._current_atr  > 0:
-            slip = abs(actual_fill_price - exit_price)
+        # FIX-25: check against verified_price (immediate response OR the
+        # /v2/fills retry) so a fill that only resolved via the retry still
+        # gets checked, instead of silently skipping this guard.
+        if verified_price is not None and self._current_atr  > 0:
+            slip = abs(verified_price - exit_price)
             slip_atr_pct = slip / self._current_atr * 100
             
             if slip_atr_pct  > MAX_EXIT_SLIPPAGE_ATR_PCT:
                 logger.critical(
                     f"[TRAIL] ⚠️ EXCESS SLIPPAGE: signal={exit_price:.2f}  "
-                    f"fill={actual_fill_price:.2f} slip={slip:.2f}pts  "
+                    f"fill={verified_price:.2f} slip={slip:.2f}pts  "
                     f"({slip_atr_pct:.1f}% of ATR={self._current_atr:.2f})  "
                     f"reason={reason} — check bracket/order state!"
                 )
