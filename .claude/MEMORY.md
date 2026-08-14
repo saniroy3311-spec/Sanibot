@@ -1,0 +1,1 @@
+- [Live trade validation confirmed](.claude/memory/live-trade-validation.md) — Real trade matches backtest exactly
