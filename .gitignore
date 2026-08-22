@@ -34,3 +34,6 @@ btc_30m*.csv
 .env
 .env.bak.*
 *.bak_*
+.env
+credentials.json
+data/
