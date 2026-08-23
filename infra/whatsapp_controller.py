@@ -13,7 +13,7 @@ COMMANDS (send these as WhatsApp messages to your bot number):
 HOW IT WORKS:
   • Meta Webhooks push inbound messages to YOUR server as HTTP POST.
   • This module starts a tiny aiohttp web server on WHATSAPP_WEBHOOK_PORT
-    (default 8080) that handles the webhook handshake and incoming
+    (default 8081) that handles the webhook handshake and incoming
     message events.
   • You must expose that port to the internet (ngrok for local dev,
     or your VPS public IP for production) and register the URL in the
@@ -26,7 +26,7 @@ SETUP STEPS:
   2. Subscribe to the "messages" webhook field.
   3. Add to .env:
        WHATSAPP_VERIFY_TOKEN=<your-verify-token>
-       WHATSAPP_WEBHOOK_PORT=8080          # optional, default 8080
+       WHATSAPP_WEBHOOK_PORT=8081          # optional, default 8081
        WHATSAPP_TO_NUMBER=<your-number>    # used for authorisation check
 
 RUNS ALONGSIDE TELEGRAM CONTROLLER:
@@ -53,7 +53,7 @@ except ImportError:
     WHATSAPP_VERIFY_TOKEN = None
     WHATSAPP_TO_NUMBER    = None
 
-WHATSAPP_WEBHOOK_PORT = int(os.environ.get("WHATSAPP_WEBHOOK_PORT", "8080"))
+WHATSAPP_WEBHOOK_PORT = int(os.environ.get("WHATSAPP_WEBHOOK_PORT", "8081"))
 
 logger = logging.getLogger(__name__)
 

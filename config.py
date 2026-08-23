@@ -570,3 +570,6 @@ BAR_CLOSE_SL_EVAL = os.environ.get("BAR_CLOSE_SL_EVAL", "true").lower() == "true
 # Pine gates every position on noPosition, so it never auto-reverses.
 # Keep false for TradingView parity.
 ALLOW_REVERSAL = os.environ.get("ALLOW_REVERSAL", "false").lower() == "true"
+
+PAPER_MODE = False
+DRY_RUN = False

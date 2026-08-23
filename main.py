@@ -1,3 +1,7 @@
+from __future__ import annotations
+import sys
+import os
+sys.path.insert(0, '/root/Sanibot')
 """
 main.py — Shiva Sniper Bot v10  (Live Runner)
 ══════════════════════════════════════════════════════════════════════════════
@@ -34,7 +38,6 @@ RUNNING
 ══════════════════════════════════════════════════════════════════════════════
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging
@@ -221,8 +224,8 @@ class ShivaSniperBot:
             self._fills_feed.stop()
         try:
             await asyncio.shield(self._telegram.send("🔴 <b>Shiva Sniper Bot Stopped</b>"))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"[SHUTDOWN] Telegram stop message failed: {e!r}")
         try:
             self._journal.close()
         except Exception:
