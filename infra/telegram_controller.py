@@ -75,7 +75,7 @@ class TelegramController:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"TelegramController loop error: {e}")
+                logger.error(f"TelegramController loop error: {type(e).__name__}: {e!r}")
                 await asyncio.sleep(3)
 
     def stop(self) -> None:

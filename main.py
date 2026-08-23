@@ -804,10 +804,38 @@ class ShivaSniperBot:
         self._trail_state  = None
         self._signal_type  = "None"
 
+    async def _heartbeat_loop(self) -> None:
+        import time
+        interval = float(os.environ.get("HEARTBEAT_INTERVAL_HOURS", "4")) * 3600
+        start_time = time.time()
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                uptime = time.time() - start_time
+                hrs = int(uptime // 3600)
+                mins = int((uptime % 3600) // 60)
+                state_str = "LIVE 🟢" if self._state.running else "PAUSED 🔴"
+                if self._in_position:
+                    pos_str = f"{self._signal_type} ({self._qty_lots} lots)"
+                else:
+                    pos_str = "None"
+                msg = (
+                    f"💓 <b>Shiva Sniper — heartbeat</b>\n"
+                    f"State: {state_str}\n"
+                    f"Uptime: {hrs}h {mins}m\n"
+                    f"Open position: {pos_str}"
+                )
+                await self._telegram.send(msg)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Heartbeat loop error: {type(e).__name__}: {e!r}")
+
     async def run(self) -> None:
         await self.initialize()
 
         if self._tg_ctrl: self._tg_ctrl_task = asyncio.create_task(self._tg_ctrl.run())
+        self._hb_task = asyncio.create_task(self._heartbeat_loop())
         # self._wa_ctrl_task = asyncio.create_task(self._wa_ctrl.run())  # disabled
 
         feed = CandleFeed(
