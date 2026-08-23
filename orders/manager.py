@@ -427,6 +427,8 @@ class OrderManager:
         is_long: bool,
         sl: float,
         tp: float,
+        atr: float = None,
+        qty: int = None,
     ) -> dict:
         """
         Place a market entry order, then attach an EMERGENCY-ONLY bracket
