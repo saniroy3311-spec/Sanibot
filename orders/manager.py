@@ -641,7 +641,7 @@ class OrderManager:
     async def close_position(
         self,
         is_long: bool,
-        reason: str = "Exit",
+        reason: str = "Exit",  expected_price=None, **kwargs
     ) -> dict:
         """
         Close the open position with a reduce-only market order.
