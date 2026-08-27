@@ -38,3 +38,8 @@ btc_30m*.csv
 credentials.json
 data/
 .env
+.env
+*.db
+credentials.json
+__pycache__/
+*.log
