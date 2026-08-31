@@ -13,6 +13,7 @@ class RiskLevels:
     def __repr__(self):
         return f"RiskLevels(sl={self.sl}, tp={self.tp}, be={self.be})"
 
+
 class TrailState:
     def __init__(self, highest=0.0, lowest=0.0, stage=0, is_be=False, **kwargs):
         self.highest = highest
@@ -28,6 +29,7 @@ class TrailState:
 
     def __repr__(self):
         return f"TrailState(highest={self.highest}, stage={self.stage})"
+
 
 class RiskCalculator:
     MAKER_FEE = 0.000236  # 0.02% + 18% GST
@@ -99,3 +101,92 @@ class RiskCalculator:
             'fees_saved_usd': round(saved_usd, 4),
             'hold_duration_mins': round(hold_duration_mins, 1)
         }
+
+
+# ─── RECOVERED (verbatim from indicators/engine.py + strategy_logic.py) ────────
+# main.py imports these 4 names directly from risk.calculator. They existed
+# in the codebase but not in this file. Recovered, not reinvented.
+
+def calc_levels(entry_price: float, atr: float, is_long: bool, is_trend: bool) -> RiskLevels:
+    """
+    Compute SL/TP from entry price + ATR.
+    Ported verbatim from indicators/engine.py (same file main.py already
+    imports `compute` from) — argument order (entry, atr, is_long, is_trend)
+    matches every call site in main.py exactly.
+    """
+    from config import TREND_ATR_MULT, RANGE_ATR_MULT, TREND_RR, RANGE_RR, MAX_SL_POINTS
+
+    atr_mult  = TREND_ATR_MULT if is_trend else RANGE_ATR_MULT
+    rr        = TREND_RR       if is_trend else RANGE_RR
+    stop_dist = min(atr * atr_mult, MAX_SL_POINTS)
+
+    if is_long:
+        sl = entry_price - stop_dist
+        tp = entry_price + stop_dist * rr
+    else:
+        sl = entry_price + stop_dist
+        tp = entry_price - stop_dist * rr
+
+    return RiskLevels(
+        entry_price = entry_price,
+        sl          = sl,
+        tp          = tp,
+        stop_dist   = stop_dist,
+        atr         = atr,
+        is_long     = is_long,
+        is_trend    = is_trend,
+    )
+
+
+def calc_real_pl(entry_price: float, exit_price: float, is_long: bool, qty: int) -> float:
+    """
+    Ported verbatim from strategy_logic.py. Net P/L after entry-leg commission
+    only (Delta bracket/limit exits are maker = 0% fee; charging both legs was
+    the old bug this function's comment explicitly calls out).
+    """
+    from config import COMMISSION_PCT
+
+    raw_pl = (exit_price - entry_price) * qty if is_long else (entry_price - exit_price) * qty
+    comm   = entry_price * qty * COMMISSION_PCT
+    return raw_pl - comm
+
+
+def calc_gross_pl(entry_price: float, exit_price: float, is_long: bool, qty: int) -> float:
+    """
+    INFERRED — not found defined anywhere in the repo (pre-existing gap,
+    not something lost tonight). "Gross" = raw P/L before commission,
+    i.e. the exact `raw_pl` line inside calc_real_pl above, without the
+    commission subtraction. Only used for logging at trail-exit
+    (main.py:743) — does not affect actual SL/TP/order placement.
+    """
+    return (exit_price - entry_price) * qty if is_long else (entry_price - exit_price) * qty
+
+
+def recalc_levels_from_fill(levels: RiskLevels, actual_fill_price: float) -> RiskLevels:
+    """
+    INFERRED — not found defined anywhere in the repo (pre-existing gap).
+    Used only on the position-recovery path (main.py:448) after a bot
+    restart, to re-anchor a freshly computed RiskLevels object onto the
+    REAL fill price reported by the exchange (which can differ from the
+    signal_close price used to compute `levels`, due to slippage).
+
+    Behavior: shifts sl/tp by the same delta as the entry price, preserving
+    the original stop_dist/rr distances. At the current main.py call site,
+    entry_price and actual_fill_price are passed as the same value, so this
+    is a verified no-op there — it only changes behavior if a future call
+    site passes a genuinely different fill price.
+
+    ⚠️ VERIFY ON TESTNET/PAPER BEFORE TRUSTING ON A LIVE RESTART-RECOVERY
+    EVENT — this is the one function in this file that was reconstructed
+    from call-site logic rather than recovered verbatim.
+    """
+    delta = actual_fill_price - levels.entry_price
+    return RiskLevels(
+        entry_price = actual_fill_price,
+        sl          = levels.sl + delta,
+        tp          = levels.tp + delta,
+        stop_dist   = levels.stop_dist,
+        atr         = levels.atr,
+        is_long     = levels.is_long,
+        is_trend    = levels.is_trend,
+    )
