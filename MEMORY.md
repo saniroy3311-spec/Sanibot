@@ -427,3 +427,15 @@ trade 83 logged `qty=30` while Delta filled 33.
 - 7-day paper trade on Delta testnet before going live
 - Compare shadow_log.jsonl vs backtest for divergence
 - Revert to rsi_bounce if WR < 60% after 30 days
+
+## 9. install_update.py incident (2026-09-01)
+
+A one-shot install_update.py script was committed and run on VPS that
+overwrote risk/calculator.py and infra/telegram.py with different
+implementations, breaking the bot. Restored via:
+```bash
+git checkout 7cc4dac -- risk/calculator.py infra/telegram.py
+```
+
+Lesson: NEVER run scripts that overwrite core files without diff review.
+Prevention: install_update.py and venv/ added to .gitignore.
