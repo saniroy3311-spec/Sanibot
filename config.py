@@ -181,7 +181,7 @@ MAX_SL_POINTS  = 500  # ORIGINAL_PINE
 # validated numbers with no edits to those files.
 #
 # Rollback: unset ENTRY_STRATEGY (or set =rsi_bounce). Nothing else changes.
-ENTRY_STRATEGY = os.environ.get("ENTRY_STRATEGY", "rsi_bounce").strip().lower()
+ENTRY_STRATEGY = os.environ.get("ENTRY_STRATEGY", "trend_breakout").strip().lower()
 
 # Validated Trend-Breakout SL/TP (spec §3): SL=0.8×ATR, TP=2.0×SL_dist.
 # Overrideable in .env for tuning, but default to the validated config.

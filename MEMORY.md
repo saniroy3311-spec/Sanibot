@@ -414,3 +414,16 @@ trade 83 logged `qty=30` while Delta filled 33.
   estimate, not backtested").
 - Intrabar stage upgrade re-enabled by request; parity tradeoff left undecided.
 - `cancel_bracket` 404 race condition — flagged, never addressed.
+
+## 8. Switched default to trend_breakout (2026-09-01)
+`ENTRY_STRATEGY` default flipped from `rsi_bounce` → `trend_breakout`.
+
+### Why
+- `rsi_bounce` lost -687.8 pts over 40 live trades
+- `trend_breakout` made +$15,427 over 1,244 backtested trades
+- Same code path via `strategy/signal.py` switch — drop-in replacement
+
+### Validation plan
+- 7-day paper trade on Delta testnet before going live
+- Compare shadow_log.jsonl vs backtest for divergence
+- Revert to rsi_bounce if WR < 60% after 30 days
