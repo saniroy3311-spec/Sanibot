@@ -43,3 +43,9 @@ data/
 credentials.json
 __pycache__/
 *.log
+
+# Virtual environment (created for pip upgrade)
+venv/
+
+# One-shot install/update scripts
+install_update.py
