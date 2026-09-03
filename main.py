@@ -522,10 +522,12 @@ class ShivaSniperBot:
 
         # ── 4. Place entry ─────────────────────────────────────────────────────
         if self._entry_lock.locked():
+            logger.warning(f"[ENTRY] Lock held — {sig.signal_type.value} skipped (concurrent bar callback)")
             return
 
         async with self._entry_lock:
             if self._in_position:
+                logger.warning(f"[ENTRY] Already in position — {sig.signal_type.value} skipped")
                 return
 
             risk_pre = calc_levels(snap.close, snap.atr, sig.is_long, sig.is_trend, entry_bar_open=snap.open, signal_close=snap.close)
