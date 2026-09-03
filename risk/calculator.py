@@ -107,7 +107,7 @@ class RiskCalculator:
 # main.py imports these 4 names directly from risk.calculator. They existed
 # in the codebase but not in this file. Recovered, not reinvented.
 
-def calc_levels(entry_price: float, atr: float, is_long: bool, is_trend: bool) -> RiskLevels:
+def calc_levels(entry_price: float, atr: float, is_long: bool, is_trend: bool, entry_bar_open: float = None, **kwargs) -> RiskLevels:
     """
     Compute SL/TP from entry price + ATR.
     Ported verbatim from indicators/engine.py (same file main.py already

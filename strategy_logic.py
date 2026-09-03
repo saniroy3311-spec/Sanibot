@@ -378,7 +378,7 @@ class TrailState:
     max_sl_fired: bool  = False
 
 
-def calc_levels(entry_price: float, atr: float, is_long: bool, is_trend: bool) -> RiskLevels:
+def calc_levels(entry_price: float, atr: float, is_long: bool, is_trend: bool, entry_bar_open: float = None, **kwargs) -> RiskLevels:
     rr       = TREND_RR       if is_trend else RANGE_RR
     atr_mult = TREND_ATR_MULT if is_trend else RANGE_ATR_MULT
     stop_dist = min(atr * atr_mult, MAX_SL_POINTS)
