@@ -194,7 +194,7 @@ async def _signed_request(
     """
     base   = _INDIA_TESTNET if DELTA_TESTNET else _INDIA_LIVE
     url    = base + path
-    body   = json.dumps(body_obj) if body_obj is not None else ""
+    body   = json.dumps(body_obj, separators=(",", ":")) if body_obj is not None else ""
     ts     = str(int(time.time()))
     sig    = _sign(method, ts, path, body)
     headers = {
