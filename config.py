@@ -412,6 +412,7 @@ BREAKOUT_BUFFER_PTS = float(os.environ.get("BREAKOUT_BUFFER_PTS", "0"))
 # COMMISSION + BUFFERS
 # ──────────────────────────────────────
 COMMISSION_PCT           = 0.05 / 100   # Pine: commission_value=0.05 (percent)
+LOT_SIZE_BTC             = 0.001         # Delta BTC perp: 1 lot = 0.001 BTC (used by risk/calculator P/L funcs)
 BRACKET_SL_BUFFER        = float(os.environ.get("BRACKET_SL_BUFFER",        "10.0"))
 TRAIL_SL_PRE_FIRE_BUFFER = float(os.environ.get("TRAIL_SL_PRE_FIRE_BUFFER", "0.0"))
 
