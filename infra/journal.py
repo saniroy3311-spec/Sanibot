@@ -253,16 +253,17 @@ class Journal:
 
         # Google Sheets sync — non-blocking
         try:
-            self._gsheet.log_trade(
-                signal_type=signal_type, is_long=is_long,
-                entry_price=entry_price, exit_price=exit_price,
-                sl=sl, tp=tp, atr=atr,
-                qty=qty,
-                real_pl=real_pl,
-                exit_reason=exit_reason,
-                trail_stage=trail_stage,
-                points_captured=points,
-            )
+            trade_data = {
+                "signal_type": signal_type, "is_long": is_long,
+                "entry_price": entry_price, "exit_price": exit_price,
+                "sl": sl, "tp": tp, "atr": atr,
+                "qty": qty,
+                "real_pl": real_pl,
+                "exit_reason": exit_reason,
+                "trail_stage": trail_stage,
+                "points_captured": points,
+            }
+            self._gsheet.log_trade(trade_data)
         except Exception as e:
             logger.error(f"GSheet sync failed (trade still saved to DB): {e}")
 

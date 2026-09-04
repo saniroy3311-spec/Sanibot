@@ -146,22 +146,16 @@ def calc_real_pl(entry_price: float, exit_price: float, is_long: bool, qty: int)
     only (Delta bracket/limit exits are maker = 0% fee; charging both legs was
     the old bug this function's comment explicitly calls out).
     """
-    from config import COMMISSION_PCT
+    from config import COMMISSION_PCT, LOT_SIZE_BTC
 
-    raw_pl = (exit_price - entry_price) * qty if is_long else (entry_price - exit_price) * qty
-    comm   = entry_price * qty * COMMISSION_PCT
+    raw_pl = ((exit_price - entry_price) * qty * LOT_SIZE_BTC) if is_long else ((entry_price - exit_price) * qty * LOT_SIZE_BTC)
+    comm   = entry_price * qty * LOT_SIZE_BTC * COMMISSION_PCT
     return raw_pl - comm
 
 
 def calc_gross_pl(entry_price: float, exit_price: float, is_long: bool, qty: int) -> float:
-    """
-    INFERRED — not found defined anywhere in the repo (pre-existing gap,
-    not something lost tonight). "Gross" = raw P/L before commission,
-    i.e. the exact `raw_pl` line inside calc_real_pl above, without the
-    commission subtraction. Only used for logging at trail-exit
-    (main.py:743) — does not affect actual SL/TP/order placement.
-    """
-    return (exit_price - entry_price) * qty if is_long else (entry_price - exit_price) * qty
+    from config import LOT_SIZE_BTC
+    return ((exit_price - entry_price) * qty * LOT_SIZE_BTC) if is_long else ((entry_price - exit_price) * qty * LOT_SIZE_BTC)
 
 
 def recalc_levels_from_fill(levels: RiskLevels, actual_fill_price: float) -> RiskLevels:
