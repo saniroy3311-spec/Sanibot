@@ -164,8 +164,8 @@ RANGE_RR       = float(os.environ.get("RANGE_RR",       "2.5"))
 TREND_ATR_MULT = float(os.environ.get("TREND_ATR_MULT", "0.6"))
 RANGE_ATR_MULT = float(os.environ.get("RANGE_ATR_MULT", "0.5"))
 # Pine: maxSLmul=1.5, maxSLpoints=500
-MAX_SL_MULT    = 1.5  # ORIGINAL_PINE
-MAX_SL_POINTS  = 500  # ORIGINAL_PINE
+MAX_SL_MULT     = float(os.environ.get("MAX_SL_MULT", "1.0"))
+MAX_SL_POINTS   = float(os.environ.get("MAX_SL_POINTS", "115.0"))
 
 # ──────────────────────────────────────
 # ENTRY STRATEGY SELECTOR  (Trend_Breakout_Strategy_Spec.pdf §6B)
