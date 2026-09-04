@@ -315,11 +315,24 @@ class OrderManager:
         self._current_sl:    Optional[float] = None
         self._current_tp:    Optional[float] = None
         self._is_long:       Optional[bool]  = None  # cached for bracket math
+        self._atr:           Optional[float] = None  # cached for slippage-check parity
 
         # Reusable HTTP session for the signed-bracket endpoints. Lazily created.
         self._http: Optional[aiohttp.ClientSession] = None
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    def set_atr(self, atr: float) -> None:
+        """
+        Cache the latest ATR value.
+
+        Normally updated implicitly whenever a fresh open_position()/
+        place_entry() call fires (see the "Cache state" step below). A
+        recovered position (bot restart mid-trade) never makes that call,
+        so main.py calls this explicitly during trail-resume to keep
+        OrderManager's cached ATR in sync — see FIX-21 in main.py.
+        """
+        self._atr = float(atr) if atr is not None else None
 
     async def initialize(self) -> None:
         """Load markets and validate the configured symbol exists."""
@@ -472,6 +485,7 @@ class OrderManager:
             self._current_tp = float(tp) if tp else 0.0
             self._bracket_active = False
             self._bracket_order_id = None
+            self._atr = float(atr) if atr is not None else None
             return order
         # ── 1. Market entry ──────────────────────────────────────────────────
         if DRY_RUN:
@@ -509,6 +523,7 @@ class OrderManager:
         self._current_tp       = float(tp)
         self._bracket_active   = False
         self._bracket_order_id = None
+        self._atr              = float(atr) if atr is not None else None
 
         # ── 3. Emergency bracket SL (placed once, never amended) ─────────────
         if DRY_RUN:
