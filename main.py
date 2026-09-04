@@ -742,7 +742,15 @@ class ShivaSniperBot:
             )
 
         risk = self._risk
-        pl   = (calc_gross_pl(risk.entry_price, exit_price, risk.is_long, self._qty_lots) if risk else 0.0)
+        try:
+            pl = (calc_gross_pl(risk.entry_price, exit_price, risk.is_long, self._qty_lots) if risk else 0.0)
+        except Exception as e:
+            # A P/L calc failure must NOT block the exit notification (this is
+            # exactly what the LOT_SIZE_BTC ImportError did — killed the alert
+            # before it reached self._telegram.notify_exit). Degrade to 0.0 and
+            # keep going so the Telegram/journal path still fires.
+            logger.warning(f"[EXIT] P/L calc failed, defaulting to 0.0: {e}")
+            pl = 0.0
 
         logger.info(
             f"[EXIT] reason={reason}  source={source}  "
