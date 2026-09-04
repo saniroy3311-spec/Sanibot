@@ -732,6 +732,19 @@ class OrderManager:
                 return {"info": "already_closed"}
             raise
 
+    async def fetch_bracket_fill_price(self):
+        """Return fill price of the most recent trade on SYMBOL."""
+        try:
+            trades = await _retry(lambda: self.exchange.fetch_my_trades(SYMBOL, limit=5))
+            if not trades:
+                return None
+            latest = sorted(trades, key=lambda t: t.get("timestamp") or 0)[-1]
+            price = latest.get("price") or (latest.get("info") or {}).get("price")
+            return float(price) if price else None
+        except Exception as exc:
+            logger.warning(f"[OM] fetch_bracket_fill_price failed: {exc}")
+            return None
+
     # ── Price feed (safety-net REST poll) ────────────────────────────────────
 
     async def fetch_ticker(self) -> Optional[dict]:

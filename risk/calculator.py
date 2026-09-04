@@ -15,7 +15,7 @@ class RiskLevels:
 
 
 class TrailState:
-    def __init__(self, highest=0.0, lowest=0.0, stage=0, is_be=False, **kwargs):
+    def __init__(self, highest=0.0, lowest=0.0, stage=0, is_be=False, be_done=False, max_sl_fired=False, **kwargs):
         self.highest = highest
         self.lowest = lowest
         self.highest_p = highest
@@ -24,6 +24,8 @@ class TrailState:
         self.current_trail_stage = stage
         self.is_be = is_be
         self.is_be_locked = is_be
+        self.be_done = be_done
+        self.max_sl_fired = max_sl_fired
         for k, v in kwargs.items():
             setattr(self, k, v)
 
