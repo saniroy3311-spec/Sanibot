@@ -534,11 +534,12 @@ class ShivaSniperBot:
 
             try:
                 order = await self._order_mgr.place_entry(
-                    is_long = sig.is_long,
-                    sl      = risk_pre.sl,
-                    tp      = risk_pre.tp,
-                    atr     = snap.atr,
-                    qty     = self._qty_lots,
+                    is_long   = sig.is_long,
+                    sl        = risk_pre.sl,
+                    tp        = risk_pre.tp,
+                    atr       = snap.atr,
+                    qty       = self._qty_lots,
+                    stop_dist = risk_pre.stop_dist,
                 )
             except Exception as e:
                 logger.error(f"[ENTRY] Order failed: {e}")

@@ -442,6 +442,7 @@ class OrderManager:
         tp: float,
         atr: float = None,
         qty: int = None,
+        stop_dist: float = None,
     ) -> dict:
         """
         Place a market entry order, then attach an EMERGENCY-ONLY bracket
@@ -506,16 +507,30 @@ class OrderManager:
                 f"id={order['id']}  fill={fill:.2f}"
             )
         else:
+            order_qty = int(qty) if qty else ALERT_QTY
             order = await _retry(lambda: self.exchange.create_order(
                 symbol = SYMBOL,
                 type   = "market",
                 side   = side,
-                amount = ALERT_QTY,
+                amount = order_qty,
             ))
             fill = float(order.get("average") or order.get("price") or 0.0)
             logger.info(
-                f"[OM] Entry filled | id={order.get('id')}  fill={fill:.2f}"
+                f"[OM] Entry filled | id={order.get('id')}  fill={fill:.2f}  qty={order_qty}"
             )
+
+            # FIX-SL-ANCHOR: re-anchor bracket SL to the REAL fill price,
+            # not the Binance signal_close price. Prevents the Delta/Binance
+            # spread from silently shrinking the intended stop buffer.
+            if stop_dist:
+                bracket_sl = (fill - stop_dist) if is_long else (fill + stop_dist)
+                if abs(bracket_sl - sl) > 0.01:
+                    logger.warning(
+                        f"[OM] Bracket SL re-anchored to fill: "
+                        f"signal-anchored={sl:.2f} -> fill-anchored={bracket_sl:.2f} "
+                        f"(fill={fill:.2f}, stop_dist={stop_dist:.2f})"
+                    )
+                sl = bracket_sl
 
         # ── 2. Cache state ───────────────────────────────────────────────────
         self._is_long          = is_long
@@ -656,7 +671,7 @@ class OrderManager:
     async def close_position(
         self,
         is_long: bool,
-        reason: str = "Exit",  expected_price=None, **kwargs
+        reason: str = "Exit",  expected_price=None, qty: int = None, **kwargs
     ) -> dict:
         """
         Close the open position with a reduce-only market order.
@@ -722,11 +737,12 @@ class OrderManager:
             logger.info(f"[OM][PAPER] Simulated close fill={price:.2f}")
             return order
         try:
+            close_qty = int(qty) if qty else ALERT_QTY
             order = await _retry(lambda: self.exchange.create_order(
                 symbol = SYMBOL,
                 type   = "market",
                 side   = side,
-                amount = ALERT_QTY,
+                amount = close_qty,
                 params = {"reduce_only": True},
             ))
             fill = float(order.get("average") or order.get("price") or 0.0)
