@@ -170,7 +170,7 @@ class ShivaSniperBot:
             open_row = self._journal.get_open_trade()
             if open_row and not existing:
                 logger.info("[STARTUP] Database ghost row detected but Delta Exchange is FLAT. Purging local trade memory.")
-                self._journal.clear_open_trade()
+                self._journal.close_open_trade()
         except Exception as je:
             logger.warning(f"[STARTUP] Local journal state verification anomaly: {je}")
 
