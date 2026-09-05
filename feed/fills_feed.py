@@ -61,6 +61,7 @@ import websockets.exceptions
 
 from config import (
     DELTA_API_KEY, DELTA_API_SECRET, DELTA_TESTNET, SYMBOL,
+    PAPER_MODE, DRY_RUN,
 )
 
 if TYPE_CHECKING:
@@ -128,6 +129,12 @@ class FillsFeed:
 
     def start_task(self) -> None:
         """Schedule the fills listener as a background asyncio task."""
+        if PAPER_MODE or DRY_RUN:
+            logger.info(
+                "[FILLS] Paper mode — private fills feed disabled"
+            )
+            return
+
         self._running = True
         loop = asyncio.get_running_loop()
         self._task      = loop.create_task(self._run(),         name="fills_feed")

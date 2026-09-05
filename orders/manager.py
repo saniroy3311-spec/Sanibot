@@ -99,7 +99,7 @@ import ccxt.async_support as ccxt
 from config import (
     PAPER_MODE,
     DELTA_API_KEY, DELTA_API_SECRET, DELTA_TESTNET,
-    SYMBOL, ALERT_QTY, DRY_RUN,
+    SYMBOL, ALERT_QTY, DRY_RUN, MAX_POSITION_LOTS,
 )
 
 logger = logging.getLogger("orders.manager")
@@ -123,6 +123,11 @@ _BRACKET_GONE_PHRASES = (
     "bracket order not found",
     "no_open_bracket_order_for_position",
 )
+
+
+class PositionQueryError(RuntimeError):
+    """Delta position state is UNKNOWN; never treat it as FLAT."""
+
 
 
 
@@ -395,35 +400,38 @@ class OrderManager:
     # ── Position query ────────────────────────────────────────────────────────
 
     async def fetch_open_position(self) -> Optional[dict]:
-        """
-        Return a simplified position dict if an open position exists, else None.
+        """Return verified position; None means confirmed FLAT only."""
+        if PAPER_MODE or DRY_RUN:
+            return None
 
-        Return schema: {"is_long": bool, "entry_price": float, "contracts": float}
-
-        Used only in the startup recovery path in main.py — not called
-        during normal bar-close / trail operation.
-        """
         try:
             positions = await _retry(
                 lambda: self.exchange.fetch_positions([SYMBOL])
             )
-            for pos in positions:
-                size = float(pos.get("contracts", 0) or 0)
-                if abs(size) > 0 and pos.get("symbol") == SYMBOL:
-                    side      = pos.get("side", "long").lower()
-                    is_long   = side == "long"
-                    entry_raw = (
-                        pos.get("entryPrice")
-                        or (pos.get("info") or {}).get("entry_price")
-                        or 0.0
-                    )
-                    return {
-                        "is_long":     is_long,
-                        "entry_price": float(entry_raw),
-                        "contracts":   abs(size),
-                    }
         except Exception as exc:
-            logger.warning(f"[OM] fetch_open_position failed: {exc}")
+            logger.error(
+                f"[OM] fetch_open_position UNKNOWN: {exc}"
+            )
+            raise PositionQueryError(str(exc)) from exc
+
+        for pos in positions:
+            size = float(pos.get("contracts", 0) or 0)
+
+            if abs(size) > 0 and pos.get("symbol") == SYMBOL:
+                side = str(pos.get("side", "long")).lower()
+
+                entry_raw = (
+                    pos.get("entryPrice")
+                    or (pos.get("info") or {}).get("entry_price")
+                    or 0.0
+                )
+
+                return {
+                    "is_long": side == "long",
+                    "entry_price": float(entry_raw),
+                    "contracts": abs(size),
+                }
+
         return None
 
     # Backward-compat alias — older modules (phase3, execution.py, and any stale
@@ -462,8 +470,10 @@ class OrderManager:
         TrailMonitor protects it — does not raise.
         """
         side = "buy" if is_long else "sell"
+        requested_qty = int(qty) if qty is not None else ALERT_QTY
+
         logger.info(
-            f"[OM] Placing entry | side={side}  qty={ALERT_QTY}  "
+            f"[OM] Placing entry | side={side}  qty={requested_qty}  "
             f"sl={sl:.2f}  tp={tp:.2f}"
         )
 
@@ -507,29 +517,160 @@ class OrderManager:
                 f"id={order['id']}  fill={fill:.2f}"
             )
         else:
-            order_qty = int(qty) if qty else ALERT_QTY
-            order = await _retry(lambda: self.exchange.create_order(
-                symbol = SYMBOL,
-                type   = "market",
-                side   = side,
-                amount = order_qty,
-            ))
-            fill = float(order.get("average") or order.get("price") or 0.0)
-            logger.info(
-                f"[OM] Entry filled | id={order.get('id')}  fill={fill:.2f}  qty={order_qty}"
+            order_qty = requested_qty
+
+            if order_qty < 1 or order_qty > MAX_POSITION_LOTS:
+                raise RuntimeError(
+                    f"ENTRY BLOCKED: requested {order_qty} lots; "
+                    f"MAX_POSITION_LOTS={MAX_POSITION_LOTS}"
+                )
+
+            # Never pyramid/add to an existing Delta position.
+            existing = await self.fetch_open_position()
+
+            if existing is not None:
+                raise RuntimeError(
+                    "ENTRY BLOCKED: Delta already has an open position "
+                    f"({existing['contracts']} lots, "
+                    f"{'LONG' if existing['is_long'] else 'SHORT'})."
+                )
+
+            # IMPORTANT:
+            # The live entry is sent ONCE.
+            # Never blindly retry an ambiguous market entry.
+            try:
+                order = await self.exchange.create_order(
+                    symbol = SYMBOL,
+                    type   = "market",
+                    side   = side,
+                    amount = order_qty,
+                )
+
+            except (ccxt.NetworkError, ccxt.RequestTimeout) as exc:
+                logger.error(
+                    f"[OM] AMBIGUOUS ENTRY RESPONSE: {exc}. "
+                    "NO automatic entry retry will be sent."
+                )
+
+                await asyncio.sleep(1.0)
+
+                try:
+                    observed = await self.fetch_open_position()
+                except PositionQueryError as verify_exc:
+                    raise RuntimeError(
+                        "ENTRY STATE UNKNOWN after network error. "
+                        "No retry sent. Check Delta manually."
+                    ) from verify_exc
+
+                if observed is None:
+                    raise RuntimeError(
+                        "Entry request timed out and Delta verified FLAT. "
+                        "No retry sent."
+                    ) from exc
+
+                same_side = (
+                    bool(observed["is_long"]) == bool(is_long)
+                )
+
+                observed_qty = float(observed["contracts"])
+
+                if (
+                    same_side
+                    and abs(observed_qty - order_qty) < 1e-9
+                ):
+                    recovered_fill = float(
+                        observed.get("entry_price") or 0.0
+                    )
+
+                    order = {
+                        "id": (
+                            "recovered-after-timeout-"
+                            f"{int(time.time() * 1000)}"
+                        ),
+                        "average": recovered_fill,
+                        "price": recovered_fill,
+                        "filled": observed_qty,
+                        "amount": observed_qty,
+                        "info": {
+                            "recovered_after_ambiguous_entry": True
+                        },
+                    }
+
+                    logger.warning(
+                        "[OM] Ambiguous entry reconciled safely: "
+                        f"{observed_qty:g} lots already open. "
+                        "No retry sent."
+                    )
+
+                else:
+                    raise RuntimeError(
+                        "ENTRY STATE UNSAFE after network error: "
+                        "Delta position does not match requested order. "
+                        "Manual check required."
+                    ) from exc
+
+            fill = float(
+                order.get("average")
+                or order.get("price")
+                or 0.0
             )
 
-            # FIX-SL-ANCHOR: re-anchor bracket SL to the REAL fill price,
-            # not the Binance signal_close price. Prevents the Delta/Binance
-            # spread from silently shrinking the intended stop buffer.
-            if stop_dist:
-                bracket_sl = (fill - stop_dist) if is_long else (fill + stop_dist)
+            # Never construct a bracket around fill=0.
+            if fill <= 0:
+                await asyncio.sleep(0.4)
+
+                try:
+                    observed = await self.fetch_open_position()
+
+                    if (
+                        observed is not None
+                        and bool(observed["is_long"]) == bool(is_long)
+                        and abs(
+                            float(observed["contracts"]) - order_qty
+                        ) < 1e-9
+                        and float(
+                            observed.get("entry_price") or 0.0
+                        ) > 0
+                    ):
+                        fill = float(observed["entry_price"])
+                        order["average"] = fill
+                        order["filled"] = float(
+                            observed["contracts"]
+                        )
+
+                        logger.info(
+                            "[OM] Entry fill recovered from "
+                            f"Delta position @ {fill:.2f}"
+                        )
+
+                except PositionQueryError as verify_exc:
+                    logger.critical(
+                        "[OM] Entry sent but fill verification "
+                        f"is UNKNOWN: {verify_exc}. "
+                        "Original signal SL will be retained."
+                    )
+
+            logger.info(
+                f"[OM] Entry accepted | id={order.get('id')}  "
+                f"fill={fill:.2f}  qty={order_qty}"
+            )
+
+            if stop_dist and fill > 0:
+                bracket_sl = (
+                    fill - stop_dist
+                    if is_long
+                    else fill + stop_dist
+                )
+
                 if abs(bracket_sl - sl) > 0.01:
                     logger.warning(
-                        f"[OM] Bracket SL re-anchored to fill: "
-                        f"signal-anchored={sl:.2f} -> fill-anchored={bracket_sl:.2f} "
-                        f"(fill={fill:.2f}, stop_dist={stop_dist:.2f})"
+                        "[OM] Bracket SL re-anchored to fill: "
+                        f"signal-anchored={sl:.2f} -> "
+                        f"fill-anchored={bracket_sl:.2f} "
+                        f"(fill={fill:.2f}, "
+                        f"stop_dist={stop_dist:.2f})"
                     )
+
                 sl = bracket_sl
 
         # ── 2. Cache state ───────────────────────────────────────────────────
@@ -639,9 +780,15 @@ class OrderManager:
         every time this method ran. The signed REST path is already used
         throughout this file for bracket operations and is reliable.
         """
-        if DRY_RUN:
-            logger.debug("[OM] PAPER mode — skipping live cancel_all_orders.")
-            await self.cancel_bracket()
+        if PAPER_MODE or DRY_RUN:
+            logger.debug(
+                "[OM] PAPER mode — skipping live cancel_all_orders."
+            )
+            self._bracket_active = False
+            self._bracket_order_id = None
+            self._current_sl = None
+            self._current_tp = None
+            self._is_long = None
             return
         try:
             if self._product_id is not None:

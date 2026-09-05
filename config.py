@@ -572,5 +572,24 @@ BAR_CLOSE_SL_EVAL = os.environ.get("BAR_CLOSE_SL_EVAL", "true").lower() == "true
 # Keep false for TradingView parity.
 ALLOW_REVERSAL = os.environ.get("ALLOW_REVERSAL", "false").lower() == "true"
 
-PAPER_MODE = False
-DRY_RUN = False
+PAPER_MODE = os.environ.get("PAPER_TRADING", "false").lower() == "true"
+DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
+TRADING_MODE = os.environ.get("TRADING_MODE", "LIVE").strip().upper()
+MAX_POSITION_LOTS = int(os.environ.get("MAX_POSITION_LOTS", "1"))
+
+if TRADING_MODE not in {"LIVE", "PAPER"}:
+    raise ValueError(
+        f"TRADING_MODE must be LIVE or PAPER, got {TRADING_MODE!r}"
+    )
+
+if TRADING_MODE == "PAPER":
+    PAPER_MODE = True
+
+if TRADING_MODE == "LIVE" and (PAPER_MODE or DRY_RUN):
+    raise ValueError(
+        "Conflicting execution mode: TRADING_MODE=LIVE requires "
+        "PAPER_TRADING=false and DRY_RUN=false"
+    )
+
+if MAX_POSITION_LOTS < 1:
+    raise ValueError("MAX_POSITION_LOTS must be >= 1")

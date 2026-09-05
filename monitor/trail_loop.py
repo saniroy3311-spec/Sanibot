@@ -1967,11 +1967,7 @@ class TrailMonitor:
             f"source={source} atr={self._current_atr:.2f} "
         )
 
-        try:
-            await self._order_mgr.cancel_all_orders()
-        except Exception as e:
-            logger.warning(f"[TRAIL] cancel_all_orders failed: {e}")
-
+        # Keep emergency bracket alive until reduce-only close succeeds.
         is_long = self._risk.is_long if self._risk else True
 
         MAX_ATTEMPTS = 3
@@ -1997,10 +1993,64 @@ class TrailMonitor:
                     await asyncio.sleep(0.5 * attempt)
 
         if not success:
-            logger.error(
-                f"[TRAIL] close_position FAILED after {MAX_ATTEMPTS} attempts  "
-                f"(last: {last_err}). ⚠️ MANUAL CHECK REQUIRED."
+            logger.critical(
+                f"[TRAIL] close_position FAILED after "
+                f"{MAX_ATTEMPTS} attempts (last: {last_err}). "
+                "Position is NOT confirmed closed. "
+                "Trail remains active."
             )
+
+            try:
+                if self._telegram is not None:
+                    await self._telegram.send(
+                        "⛔ <b>EXIT NOT CONFIRMED</b>\n"
+                        "Sanibot could not confirm a Delta close. "
+                        "Trail remains active. Check Delta immediately."
+                    )
+            except Exception:
+                pass
+
+            self._exit_fired = False
+            return
+
+        # Never clear local trade state until Delta confirms flat.
+        flat_confirmed = False
+        verify_error = None
+
+        for verify_attempt in range(1, 4):
+            try:
+                pos = await self._order_mgr.fetch_open_position()
+
+                if pos is None:
+                    flat_confirmed = True
+                    break
+
+                logger.warning(
+                    f"[TRAIL] Exit verify "
+                    f"{verify_attempt}/3: Delta still shows "
+                    f"{pos.get('contracts')} lots open"
+                )
+
+            except Exception as exc:
+                verify_error = exc
+
+                logger.warning(
+                    f"[TRAIL] Exit verify "
+                    f"{verify_attempt}/3 UNKNOWN: {exc}"
+                )
+
+            if verify_attempt < 3:
+                await asyncio.sleep(0.5 * verify_attempt)
+
+        if not flat_confirmed:
+            logger.critical(
+                "[TRAIL] EXIT NOT VERIFIED FLAT. "
+                f"Last verify error={verify_error}. "
+                "Local position state will NOT be cleared."
+            )
+
+            self._exit_fired = False
+            return
 
         # ── FIX-25 (FABRICATED-EXIT-PRICE, take 2) ────────────────────────────
         # create_order() for a Delta market order routinely comes back with no

@@ -52,7 +52,7 @@ from config import (
     TELEGRAM_ENABLED,
     SYMBOL, ALERT_QTY, POSITION_BTC_SIZE, CANDLE_TIMEFRAME, FILTER_VOL_ENABLED,
     POSITION_BTC_SIZE, TREND_ATR_MULT, RANGE_ATR_MULT,
-    ALLOW_REVERSAL,
+    ALLOW_REVERSAL, MAX_POSITION_LOTS, PAPER_MODE, DRY_RUN,
 )
 from feed.ws_feed            import CandleFeed
 from feed.binance_price_feed import BinancePriceFeed
@@ -64,7 +64,7 @@ from risk.calculator    import (
     calc_levels, recalc_levels_from_fill, calc_real_pl, calc_gross_pl,
 )
 from monitor.trail_loop import TrailMonitor
-from orders.manager     import OrderManager
+from orders.manager     import OrderManager, PositionQueryError
 from infra.telegram            import Telegram
 from infra.telegram_controller import TelegramController, EngineState
 from infra.whatsapp            import WhatsApp
@@ -118,8 +118,21 @@ class ShivaSniperBot:
         #     order_mgr    = self._order_mgr,
         # )
 
-        # ALERT_QTY (.env) is now the single source of truth for trade size.
         self._qty_lots = btc_to_lots(POSITION_BTC_SIZE)
+
+        if self._qty_lots != ALERT_QTY:
+            raise RuntimeError(
+                f"Sizing mismatch: POSITION_BTC_SIZE="
+                f"{POSITION_BTC_SIZE} -> {self._qty_lots} lots, "
+                f"but ALERT_QTY={ALERT_QTY}. Refusing to start."
+            )
+
+        if self._qty_lots > MAX_POSITION_LOTS:
+            raise RuntimeError(
+                f"Position size {self._qty_lots} exceeds "
+                f"MAX_POSITION_LOTS={MAX_POSITION_LOTS}. "
+                "Refusing to start."
+            )
 
         _dashboard.init(self._journal)
         self._trail_mon = TrailMonitor(
@@ -147,24 +160,67 @@ class ShivaSniperBot:
         logger.info("═" * 70)
         logger.info("  Shiva Sniper Bot v10 — Starting")
         logger.info(f"  Symbol={SYMBOL}  TF={CANDLE_TIMEFRAME}")
-        logger.info(f"  Position size: {self._qty_lots} lots (from ALERT_QTY)")
+        logger.info(
+            f"  Position size: {self._qty_lots} lots "
+            f"(POSITION_BTC_SIZE={POSITION_BTC_SIZE})"
+        )
+        logger.info(
+            f"  Safety cap: MAX_POSITION_LOTS="
+            f"{MAX_POSITION_LOTS} "
+            f"PAPER_MODE={PAPER_MODE} DRY_RUN={DRY_RUN}"
+        )
         logger.info(f"  FILTER_VOL_ENABLED={FILTER_VOL_ENABLED}  (false = full Pine parity)")
         logger.info(f"  MAX_ENTRY_SLIP_ATR_FRAC={MAX_ENTRY_SLIP_ATR_FRAC}  (SL recalc threshold)")
         logger.info("═" * 70)
 
         await self._order_mgr.initialize()
 
+        # UNKNOWN account state must block live startup.
         try:
-            existing_check = await self._order_mgr.fetch_open_position()
-            if existing_check is None:
-                await self._order_mgr.cancel_all_orders()
-                logger.info("[STARTUP] Flat on Delta — cancelled all stale bracket orders (clean slate)")
-        except Exception as e:
-            logger.warning(f"[STARTUP] Bracket cleanup failed (non-fatal): {e}")
+            existing = await self._order_mgr.fetch_open_position()
 
-        # ── Startup recovery: adopt any pre-existing open position ─────────────
-        existing = await self._order_mgr.fetch_open_position()
-        
+        except PositionQueryError as exc:
+            logger.critical(
+                "[STARTUP] BLOCKED: Delta position state "
+                f"is UNKNOWN: {exc}"
+            )
+
+            try:
+                await self._telegram.send(
+                    "⛔ <b>Sanibot startup blocked</b>\n"
+                    "Delta position state could not be verified. "
+                    "No trading started."
+                )
+            except Exception:
+                pass
+
+            raise RuntimeError(
+                "Delta position state could not be verified"
+            ) from exc
+
+        if existing is None:
+            if PAPER_MODE or DRY_RUN:
+                logger.info(
+                    "[STARTUP] PAPER mode — private Delta "
+                    "position/order cleanup skipped"
+                )
+            else:
+                await self._order_mgr.cancel_all_orders()
+
+                logger.info(
+                    "[STARTUP] Delta verified FLAT — "
+                    "stale-order cleanup requested"
+                )
+
+        elif float(existing.get("contracts") or 0) > MAX_POSITION_LOTS:
+            raise RuntimeError(
+                f"[STARTUP] BLOCKED: Delta has "
+                f"{existing['contracts']} lots open, above "
+                f"MAX_POSITION_LOTS={MAX_POSITION_LOTS}."
+            )
+
+        # Reuse this verified position result for recovery.
+
         # FIX: Validate local database vs actual exchange reality
         try:
             open_row = self._journal.get_open_trade()
