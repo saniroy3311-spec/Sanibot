@@ -339,16 +339,14 @@ def _trail_arm_pts(stage: int, atr: float) -> float:
     return _pine_tick_distance(atr * pts_mult)
 
 def _trail_off(stage: int, atr: float) -> float:
-    """
-    Offset distance = gap between best_price and trail_sl.
-    Pine: trail_offset = atr * off_mult * PINE_MINTICK.
-    Optionally floored at atr * TRAIL_OFFSET_FLOOR_MULT.
-    """
+    """Offset = staged Pine value, floored at atr*FLOOR_MULT and MIN_TRAIL_OFFSET_POINTS (.env)."""
+    import os
     idx = max(stage - 1, 0)
     _, _, off_mult = TRAIL_STAGES[idx]
-    raw   = _pine_tick_distance(atr * off_mult)
-    floor = atr * TRAIL_OFFSET_FLOOR_MULT
-    return max(raw, floor)
+    raw     = _pine_tick_distance(atr * off_mult)
+    floor   = atr * TRAIL_OFFSET_FLOOR_MULT
+    min_pts = float(os.environ.get("MIN_TRAIL_OFFSET_POINTS", "0.0"))
+    return max(raw, floor, min_pts)
 
 def _activation_price(entry: float, stage: int, atr: float, is_long: bool) -> float:
     """
