@@ -484,16 +484,22 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
     # Pine: close > high[1]  →  snap.close > snap.prev_high
     # Pine: close < low[1]   →  snap.close < snap.prev_low
     # FIX-BREAKOUT-BUFFER: add BREAKOUT_BUFFER_PTS to filter feed divergence.
+    # FIX-DIRECTION-GATE: direction now driven by price vs the FAST ema_fast
+    # (50-len), not the slow ema_fast/ema_trend (50/200) cross, which required
+    # a Death Cross to ever allow a short. ema_trend (200) is kept as a macro
+    # confirmation filter, not the sole direction gate.
     trend_long = (
         tr
-        and snap.ema_fast > snap.ema_trend
+        and snap.close > snap.ema_fast
+        and snap.close > snap.ema_trend
         and snap.dip > snap.dim
         and snap.close > snap.prev_high + BREAKOUT_BUFFER_PTS
         and f
     )
     trend_short = (
         tr
-        and snap.ema_fast < snap.ema_trend
+        and snap.close < snap.ema_fast
+        and snap.close < snap.ema_trend
         and snap.dim > snap.dip
         and snap.close < snap.prev_low - BREAKOUT_BUFFER_PTS
         and f
