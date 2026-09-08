@@ -308,6 +308,13 @@ def _trail_pts(stage: int, atr: float) -> float:
     return _pine_tick_distance(atr * pts_mult)
 
 def _trail_arm_pts(stage: int, atr: float) -> float:
+    """Require at least 250 points profit before arming to allow big runners to develop."""
+    import os
+    min_arm = float(os.environ.get("TRAIL_ARM_MIN_POINTS", "250.0"))
+    idx = max(stage - 1, 0)
+    trig_mult, pts_mult, _ = TRAIL_STAGES[idx]
+    raw = atr * trig_mult if TRAIL_ARM_USE_TRIGGER else _pine_tick_distance(atr * pts_mult)
+    return max(raw, min_arm)
     """
     FIX-NOISE-2026-07-18: Distance required to ARM the trail.
 
@@ -346,7 +353,8 @@ def _trail_off(stage: int, atr: float) -> float:
     raw     = _pine_tick_distance(atr * off_mult)
     floor   = atr * TRAIL_OFFSET_FLOOR_MULT
     min_pts = float(os.environ.get("MIN_TRAIL_OFFSET_POINTS", "0.0"))
-    return max(raw, floor, min_pts)
+    import os
+    return float(os.environ.get("TRAIL_OFFSET_POINTS", "90.0"))
 
 def _activation_price(entry: float, stage: int, atr: float, is_long: bool) -> float:
     """
