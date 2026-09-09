@@ -71,7 +71,8 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
             and snap.close > snap.ema_fast
             and snap.close > snap.ema_trend
             and snap.dip > snap.dim
-            and (abs(snap.close - snap.ema_fast) / snap.atr) <= 3.0):
+            and (abs(snap.close - snap.ema_fast) / snap.atr) <= 1.8
+            and ((snap.high - max(snap.close, snap.prev_close)) / max(snap.high - snap.low, 1.0)) <= 0.28):
         return Signal(SignalType.TREND_LONG, is_long=True, is_trend=True, regime="TREND")
 
     # SHORT: breakout below prev bar low, bear structure
@@ -79,7 +80,8 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
             and snap.close < snap.ema_fast
             and snap.close < snap.ema_trend
             and snap.dim > snap.dip
-            and (abs(snap.close - snap.ema_fast) / snap.atr) <= 3.0):
+            and (abs(snap.close - snap.ema_fast) / snap.atr) <= 1.8
+            and ((min(snap.close, snap.prev_close) - snap.low) / max(snap.high - snap.low, 1.0)) <= 0.28):
         return Signal(SignalType.TREND_SHORT, is_long=False, is_trend=True, regime="TREND")
 
     return Signal(SignalType.NONE, False, False, "NONE")
