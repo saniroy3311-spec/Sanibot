@@ -21,7 +21,7 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
 
     # Extension distance from 50 EMA
     extension = abs(snap.close - snap.ema_fast) / max(snap.atr, 1.0)
-    if extension > 1.8:
+    if extension > 1.8 or abs(snap.close - snap.ema_fast) > 300.0:
         return Signal(SignalType.NONE, False, False, "NONE")
 
     # LONG: breakout above prev bar high, bull structure
