@@ -541,7 +541,7 @@ OPT_EMA_FAST_LEN       = int(os.environ.get("OPT_EMA_FAST_LEN", "10"))
 OPT_EMA_SLOW_LEN       = int(os.environ.get("OPT_EMA_SLOW_LEN", "160"))
 
 # ATR Minimum Volatility Filter — avoid low-vol "papercut" trades
-OPT_ATR_MIN_FILTER     = float(os.environ.get("OPT_ATR_MIN_FILTER", "120.0"))
+OPT_ATR_MIN_FILTER     = float(os.environ.get("OPT_ATR_MIN_FILTER", "290.0"))
 OPT_ATR_MIN_PCT        = float(os.environ.get("OPT_ATR_MIN_PCT", "0.0012"))
 
 # Initial Stop Loss % (as % of entry price) — overrides ATR-based SL when > 0
