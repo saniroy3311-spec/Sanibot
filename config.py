@@ -107,8 +107,8 @@ WHATSAPP_TEMPLATE_LANG   = os.environ.get("WHATSAPP_TEMPLATE_LANG",    "en")
 # ──────────────────────────────────────
 # INDICATOR LENGTHS  (Pine-exact)
 # ──────────────────────────────────────
-EMA_TREND_LEN = int(os.environ.get("EMA_TREND_LEN", "200"))
-EMA_FAST_LEN  = int(os.environ.get("EMA_FAST_LEN",  "50"))
+EMA_TREND_LEN = int(os.environ.get("EMA_TREND_LEN", "15"))
+EMA_FAST_LEN  = int(os.environ.get("EMA_FAST_LEN",  "9"))
 ATR_LEN       = 14
 DI_LEN        = 14
 ADX_SMOOTH    = 14
@@ -533,7 +533,7 @@ OPT_ADX_MIN_FILTER     = float(os.environ.get("OPT_ADX_MIN_FILTER", "24"))
 # Higher Timeframe Trend Filter (4H 200 EMA)
 # Only take 30m trades in direction of 4H macro trend
 OPT_HTF_TREND_ENABLED  = os.environ.get("OPT_HTF_TREND_ENABLED", "true").lower() == "true"
-OPT_HTF_EMA_LEN        = int(os.environ.get("OPT_HTF_EMA_LEN", "200"))
+OPT_HTF_EMA_LEN        = int(os.environ.get("OPT_HTF_EMA_LEN", "15"))
 OPT_HTF_TIMEFRAME      = os.environ.get("OPT_HTF_TIMEFRAME", "4h")
 
 # EMA Crossover Tuning (Fast/Slow on 30m)
