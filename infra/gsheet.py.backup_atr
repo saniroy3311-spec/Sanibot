@@ -61,7 +61,6 @@ class GSheet:
             entry_p,
             exit_p,
             round(float(trade_data.get("atr", trade_data.get("entry_atr", 0.0))), 1),  # Column H: ATR
-            round(float(trade_data.get("atr", trade_data.get("entry_atr", 0.0))), 1),  # Column H: ATR
             pts,
             lots,
             btc_size,

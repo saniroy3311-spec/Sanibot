@@ -338,9 +338,9 @@ PINE_TICK_TRUNCATE = os.environ.get("PINE_TICK_TRUNCATE", "false").lower() == "t
 # do not "solve" for these numbers again. That is what caused this bug.
 # ─────────────────────────────────────────────────────────────────────────────
 TRAIL_STAGES = [
-    (0.8,  0.50, 0.40),   # Stage 1   — Pine t1Trig/t1Pts/t1Off  ← RESTORED 0.20→0.40
-    (1.5,  0.40, 0.30),   # Stage 2   — Pine t2Trig/t2Pts/t2Off
-    (2.5,  0.30, 0.25),   # Stage 3   — Pine t3Trig/t3Pts/t3Off
+    (0.8,  0.50, 0.70),   # Stage 1   — Pine t1Trig/t1Pts/t1Off  ← RESTORED 0.20→0.40
+    (1.5,  0.40, 0.50),   # Stage 2   — Pine t2Trig/t2Pts/t2Off
+    (2.5,  0.30, 0.40),   # Stage 3   — Pine t3Trig/t3Pts/t3Off
     (4.0,  0.20, 0.15),   # Stage 4   — Pine t4Trig/t4Pts/t4Off
     (6.0,  0.15, 0.10),   # Stage 5   — Pine t5Trig/t5Pts/t5Off
 ]
