@@ -19,9 +19,10 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
     if not snap.trend_regime or not snap.filters_ok:
         return Signal(SignalType.NONE, False, False, "NONE")
 
-    # Extension distance from 50 EMA
+    # Extension distance from 50 EMA — 3.5x ATR + wick guard (parity with indicators/engine.py)
     extension = abs(snap.close - snap.ema_fast) / max(snap.atr, 1.0)
-    if extension > 1.8 or abs(snap.close - snap.ema_fast) > 300.0:
+    wick_ok = (extension <= 1.8 or snap.close <= snap.low + 0.25 * (snap.high - snap.low))
+    if extension > 3.5 or not wick_ok:
         return Signal(SignalType.NONE, False, False, "NONE")
 
     # LONG: breakout above prev bar high, bull structure
