@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from indicators.engine import IndicatorSnapshot
 
-MAX_EXTENSION = 3.5      # hard cap — beyond this, always reject (too extended)
+MAX_EXTENSION = float("inf")  # unconstrained ceiling (wick guard still active)
 TIGHT_EXTENSION = 1.8    # below this, no wick check needed
 WICK_FRACTION = 0.25     # close must be in the outer 25% of the bar range
 
