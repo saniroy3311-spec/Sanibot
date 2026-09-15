@@ -4,6 +4,7 @@ strategy/trend_breakout.py — Shiva Sniper Bot-v10
 from __future__ import annotations
 
 from indicators.engine import Signal, SignalType, IndicatorSnapshot
+from strategy.guards import passes_extension_guard
 from config import ADX_TREND_TH, BREAKOUT_BUFFER_PTS
 
 
