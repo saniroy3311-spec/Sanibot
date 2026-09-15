@@ -10,14 +10,17 @@ signal drops. This module exists so that can't happen again — tune the
 constants here ONCE and both paths pick it up automatically.
 """
 
-from indicators.engine import IndicatorSnapshot
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from indicators.engine import IndicatorSnapshot
 
 MAX_EXTENSION = 3.5      # hard cap — beyond this, always reject (too extended)
 TIGHT_EXTENSION = 1.8    # below this, no wick check needed
 WICK_FRACTION = 0.25     # close must be in the outer 25% of the bar range
 
 
-def passes_extension_guard(snap: IndicatorSnapshot, is_long: bool) -> bool:
+def passes_extension_guard(snap: "IndicatorSnapshot", is_long: bool) -> bool:
     """
     True if price is not too extended from the 50 EMA to take a fresh
     breakout entry. Direction-aware: for longs, a strong bar closes near

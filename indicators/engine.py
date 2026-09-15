@@ -50,6 +50,8 @@ PRESERVED FROM ORIGINAL
 
 from __future__ import annotations
 
+from strategy.guards import passes_extension_guard
+
 import logging
 from dataclasses import dataclass
 from enum import Enum
@@ -494,8 +496,7 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
         and snap.close > snap.ema_trend
         and snap.dip > snap.dim
         and snap.close > snap.prev_high + BREAKOUT_BUFFER_PTS
-        and (abs(snap.close - snap.ema_fast) / snap.atr) <= 3.5
-        and ((abs(snap.close - snap.ema_fast) / snap.atr) <= 1.8 or snap.close >= snap.high - 0.25 * (snap.high - snap.low))
+        and passes_extension_guard(snap, is_long=True)
         and f
     )
     trend_short = (
@@ -504,8 +505,7 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
         and snap.close < snap.ema_trend
         and snap.dim > snap.dip
         and snap.close < snap.prev_low - BREAKOUT_BUFFER_PTS
-        and (abs(snap.close - snap.ema_fast) / snap.atr) <= 3.5
-        and ((abs(snap.close - snap.ema_fast) / snap.atr) <= 1.8 or snap.close <= snap.low + 0.25 * (snap.high - snap.low))
+        and passes_extension_guard(snap, is_long=False)
         and f
     )
     range_long  = rr and snap.rsi < RSI_OS and f
