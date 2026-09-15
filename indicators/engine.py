@@ -495,6 +495,7 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
         and snap.dip > snap.dim
         and snap.close > snap.prev_high + BREAKOUT_BUFFER_PTS
         and (abs(snap.close - snap.ema_fast) / snap.atr) <= 3.5
+        and ((abs(snap.close - snap.ema_fast) / snap.atr) <= 1.8 or snap.close >= snap.high - 0.25 * (snap.high - snap.low))
         and f
     )
     trend_short = (
@@ -504,6 +505,7 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
         and snap.dim > snap.dip
         and snap.close < snap.prev_low - BREAKOUT_BUFFER_PTS
         and (abs(snap.close - snap.ema_fast) / snap.atr) <= 3.5
+        and ((abs(snap.close - snap.ema_fast) / snap.atr) <= 1.8 or snap.close <= snap.low + 0.25 * (snap.high - snap.low))
         and f
     )
     range_long  = rr and snap.rsi < RSI_OS and f
