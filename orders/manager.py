@@ -419,16 +419,26 @@ class OrderManager:
             size = float(pos.get("contracts", 0) or 0)
 
             if abs(size) > 0 and pos.get("symbol") == SYMBOL:
-                side = str(pos.get("side", "long")).lower()
+                raw_info = pos.get("info") or {}
+                raw_side = str(pos.get("side") or raw_info.get("side") or "").strip().lower()
+                raw_size = float(raw_info.get("size") or pos.get("contracts") or 0)
+
+                # Robust Long detection: check side ('long'/'buy') or positive signed size
+                if raw_side in ("long", "buy"):
+                    is_long = True
+                elif raw_side in ("short", "sell"):
+                    is_long = False
+                else:
+                    is_long = raw_size > 0
 
                 entry_raw = (
                     pos.get("entryPrice")
-                    or (pos.get("info") or {}).get("entry_price")
+                    or raw_info.get("entry_price")
                     or 0.0
                 )
 
                 return {
-                    "is_long": side == "long",
+                    "is_long": is_long,
                     "entry_price": float(entry_raw),
                     "contracts": abs(size),
                 }
