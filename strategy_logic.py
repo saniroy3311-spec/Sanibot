@@ -360,14 +360,14 @@ def evaluate_entry(snap: IndicatorSnapshot, has_position: bool) -> Signal:
 
 @dataclass
 class RiskLevels:
-    entry_price: float
-    sl:          float
-    tp:          float
-    stop_dist:   float
-    atr:         float
+    entry_price:  float
+    sl:           float
+    tp:           float
+    stop_dist:    float
+    atr:          float
     signal_close: float = 0.0
-    is_long: bool = True
-    is_trend:    bool
+    is_long:      bool  = True
+    is_trend:     bool  = True
 
 
 @dataclass
