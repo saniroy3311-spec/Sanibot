@@ -23,16 +23,27 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
     if not snap.trend_regime or not snap.filters_ok:
         return Signal(SignalType.NONE, False, False, "NONE")
 
-    # LONG: breakout above prev bar high, bull structure
-    if (snap.close > snap.prev_high + BREAKOUT_BUFFER_PTS
+    # Early Candle 1 Trigger (Breakout of prev extreme OR Reversal across prev midpoint)
+    prev_midpoint = (snap.prev_high + snap.prev_low) / 2.0
+    long_trigger = (
+        snap.close > snap.prev_high + BREAKOUT_BUFFER_PTS
+        or (snap.close > snap.open and snap.close > prev_midpoint and (snap.close - snap.open) >= 0.16 * snap.atr)
+    )
+    short_trigger = (
+        snap.close < snap.prev_low - BREAKOUT_BUFFER_PTS
+        or (snap.close < snap.open and snap.close < prev_midpoint and (snap.open - snap.close) >= 0.16 * snap.atr)
+    )
+
+    # LONG: early candle 1 trigger, bull structure
+    if (long_trigger
             and snap.close > snap.ema_fast
             and snap.close > snap.ema_trend
             and snap.dip > snap.dim
             and passes_extension_guard(snap, is_long=True)):
         return Signal(SignalType.TREND_LONG, is_long=True, is_trend=True, regime="TREND")
 
-    # SHORT: breakout below prev bar low, bear structure
-    if (snap.close < snap.prev_low - BREAKOUT_BUFFER_PTS
+    # SHORT: early candle 1 trigger, bear structure
+    if (short_trigger
             and snap.close < snap.ema_fast
             and snap.close < snap.ema_trend
             and snap.dim > snap.dip
