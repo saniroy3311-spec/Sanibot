@@ -540,7 +540,7 @@ def calc_levels(entry_price: float, atr: float, is_long: bool, is_trend: bool, e
     """
     atr_mult  = TREND_ATR_MULT if is_trend else RANGE_ATR_MULT
     rr        = TREND_RR       if is_trend else RANGE_RR
-    stop_dist = min(atr * atr_mult, MAX_SL_POINTS)
+    stop_dist = min(atr * atr_mult, 180.0)  # Hard ceiling at 180.0 pts
 
     if is_long:
         sl = entry_price - stop_dist
