@@ -365,6 +365,7 @@ class RiskLevels:
     tp:          float
     stop_dist:   float
     atr:         float
+    signal_close: float = 0.0
     is_long:     bool
     is_trend:    bool
 

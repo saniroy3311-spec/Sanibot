@@ -1403,7 +1403,11 @@ class TrailMonitor:
         entry_price = risk.entry_price   # REAL fill — Max SL / breakeven use this
         # FIX-ANCHOR-2026-07-18: separate anchor for arm/profit-distance math
         # only. See on_bar_close() for full explanation.
-        pine_entry  = risk.signal_close if risk.signal_close > 0 else risk.entry_price
+        try:
+            sig_c = getattr(risk, "signal_close", None)
+            pine_entry = sig_c if (sig_c is not None and sig_c > 0) else getattr(risk, "entry_price", 0.0)
+        except Exception:
+            pine_entry = getattr(risk, "entry_price", 0.0)
         atr          = self._current_atr
 
         # ── 1. TP hit ─────────────────────────────────────────────────────────
