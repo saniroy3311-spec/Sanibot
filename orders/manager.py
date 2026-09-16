@@ -90,6 +90,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import time
 from typing import Any, Optional
 
@@ -656,25 +657,32 @@ class OrderManager:
             )
 
             if stop_dist and fill > 0:
-                # Strictly clamp stop loss distance to maximum 180.0 points from actual fill price
-                max_allowed_sl = float(os.environ.get("MAX_SL_POINTS", 180.0))
-                effective_dist = min(stop_dist, max_allowed_sl)
-                bracket_sl = (
-                    fill - effective_dist
-                    if is_long
-                    else fill + effective_dist
-                )
-
-                if abs(bracket_sl - sl) > 0.01:
-                    logger.warning(
-                        "[OM] Bracket SL re-anchored to fill: "
-                        f"signal-anchored={sl:.2f} -> "
-                        f"fill-anchored={bracket_sl:.2f} "
-                        f"(fill={fill:.2f}, "
-                        f"stop_dist={stop_dist:.2f})"
+                # Strictly clamp stop loss distance to maximum 180.0 points from actual fill price.
+                # This is a post-fill refinement only -- never let it swallow a confirmed fill.
+                try:
+                    max_allowed_sl = float(os.environ.get("MAX_SL_POINTS", 180.0))
+                    effective_dist = min(stop_dist, max_allowed_sl)
+                    bracket_sl = (
+                        fill - effective_dist
+                        if is_long
+                        else fill + effective_dist
                     )
 
-                sl = bracket_sl
+                    if abs(bracket_sl - sl) > 0.01:
+                        logger.warning(
+                            "[OM] Bracket SL re-anchored to fill: "
+                            f"signal-anchored={sl:.2f} -> "
+                            f"fill-anchored={bracket_sl:.2f} "
+                            f"(fill={fill:.2f}, "
+                            f"stop_dist={stop_dist:.2f})"
+                        )
+
+                    sl = bracket_sl
+                except Exception as cap_exc:
+                    logger.critical(
+                        "[OM] SL re-anchor calc FAILED post-fill -- "
+                        f"keeping signal-anchored SL={sl:.2f}. Error: {cap_exc}"
+                    )
 
         # ── 2. Cache state ───────────────────────────────────────────────────
         self._is_long          = is_long
