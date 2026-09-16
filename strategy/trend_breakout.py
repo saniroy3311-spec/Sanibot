@@ -17,7 +17,7 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
     if has_position:
         return Signal(SignalType.NONE, False, False, "NONE")
 
-    if snap.atr < 250.0:
+    if snap.atr < 220.0:
         return Signal(SignalType.NONE, False, False, "NONE")
 
     if not snap.trend_regime or not snap.filters_ok:

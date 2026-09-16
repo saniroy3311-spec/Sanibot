@@ -354,7 +354,10 @@ def _trail_off(stage: int, atr: float) -> float:
     floor   = atr * TRAIL_OFFSET_FLOOR_MULT
     min_pts = float(os.environ.get("MIN_TRAIL_OFFSET_POINTS", "0.0"))
     import os
-    return float(os.environ.get("TRAIL_OFFSET_POINTS", "90.0"))
+    # Phase 3: Dynamic Volatility Cushion (absorbs 3m wicks, min 220 pts)
+    dynamic_buffer = max(1.0 * atr, 220.0)
+    min_env_pts = float(os.environ.get("MIN_TRAIL_OFFSET_POINTS", "220.0"))
+    return max(dynamic_buffer, min_env_pts)
 
 def _activation_price(entry: float, stage: int, atr: float, is_long: bool) -> float:
     """
