@@ -656,10 +656,13 @@ class OrderManager:
             )
 
             if stop_dist and fill > 0:
+                # Strictly clamp stop loss distance to maximum 180.0 points from actual fill price
+                max_allowed_sl = float(os.environ.get("MAX_SL_POINTS", 180.0))
+                effective_dist = min(stop_dist, max_allowed_sl)
                 bracket_sl = (
-                    fill - stop_dist
+                    fill - effective_dist
                     if is_long
-                    else fill + stop_dist
+                    else fill + effective_dist
                 )
 
                 if abs(bracket_sl - sl) > 0.01:
