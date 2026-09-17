@@ -33,6 +33,10 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
     if snap.atr < 220.0:
         return Signal(SignalType.NONE, False, False, "NONE")
 
+    # 2b. ADX Trend Velocity Gate (Blocks chop if ADX < 20.0)
+    if getattr(snap, "adx", 25.0) < 20.0:
+        return Signal(SignalType.NONE, False, False, "NONE")
+
     # 3. Trend & Filter Checks
     if not snap.trend_regime or not snap.filters_ok:
         return Signal(SignalType.NONE, False, False, "NONE")
