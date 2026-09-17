@@ -382,7 +382,7 @@ class TrailState:
 def calc_levels(entry_price: float, atr: float, is_long: bool, is_trend: bool, entry_bar_open: float = None, **kwargs) -> RiskLevels:
     rr       = TREND_RR       if is_trend else RANGE_RR
     atr_mult = TREND_ATR_MULT if is_trend else RANGE_ATR_MULT
-    stop_dist = min(atr * atr_mult, MAX_SL_POINTS)
+    stop_dist = min(atr * atr_mult, 180.0)  # Hard ceiling at 180.0 pts
 
     # Optimization: Use fixed % SL if configured
     if OPT_INITIAL_SL_PCT > 0:
