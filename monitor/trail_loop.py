@@ -1,11 +1,3 @@
-
-def calculate_dynamic_cushion(profit_pts, base_cushion=110.0, adx=25.0):
-    if adx < 18.0:
-        return 95.0
-    if profit_pts >= 450.0:
-        return min(280.0, max(base_cushion, 0.45 * profit_pts))
-    return base_cushion
-
 """
 monitor/trail_loop.py — Shiva Sniper v10 — PINE-EXACT-TRAIL
 ════════════════════════════════════════════════════════════════════════════
@@ -113,6 +105,14 @@ Once BE fires, trail continues but SL can never go worse than entry.
 ════════════════════════════════════════════════════════════════════════════
 """
 from __future__ import annotations
+
+def calculate_dynamic_cushion(profit_pts, base_cushion=110.0, adx=25.0):
+    if adx < 18.0:
+        return 95.0
+    if profit_pts >= 450.0:
+        return min(280.0, max(base_cushion, 0.45 * profit_pts))
+    return base_cushion
+
 import asyncio
 import logging
 import math
