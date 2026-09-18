@@ -10,6 +10,7 @@ from strategy.guards import passes_extension_guard
 from config import ADX_TREND_TH, BREAKOUT_BUFFER_PTS
 
 _last_signal_time = 0.0
+_prev_adx = 0.0
 
 
 def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
@@ -19,7 +20,7 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
     Extension Guard: <= 1.8x ATR distance from 50 EMA (blocks late chasing).
     Wick Guard: Rejects candles where wick > body or closing in rejection zone.
     """
-    global _last_signal_time
+    global _last_signal_time, _prev_adx
 
     if has_position:
         return Signal(SignalType.NONE, False, False, "NONE")
@@ -33,8 +34,11 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
     if snap.atr < 220.0:
         return Signal(SignalType.NONE, False, False, "NONE")
 
-    # 2b. ADX Trend Velocity Gate (Blocks chop if ADX < 20.0)
-    if getattr(snap, "adx", 25.0) < 20.0:
+    # 2b. Dynamic ADX Velocity & Rising Momentum Gate (Blocks chop, catches trends early)
+    curr_adx = getattr(snap, "adx", 25.0)
+    is_rising = (curr_adx > _prev_adx) if _prev_adx > 0 else True
+    _prev_adx = curr_adx
+    if curr_adx < 16.0 or not is_rising:
         return Signal(SignalType.NONE, False, False, "NONE")
 
     # 3. Trend & Filter Checks
