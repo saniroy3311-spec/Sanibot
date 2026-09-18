@@ -109,8 +109,8 @@ from __future__ import annotations
 def calculate_dynamic_cushion(profit_pts, base_cushion=110.0, adx=25.0):
     if adx < 18.0:
         return 95.0
-    if profit_pts >= 450.0:
-        return min(280.0, max(base_cushion, 0.45 * profit_pts))
+    if profit_pts >= 400.0:
+        return min(165.0, max(base_cushion, 0.30 * profit_pts))
     return base_cushion
 
 import asyncio
