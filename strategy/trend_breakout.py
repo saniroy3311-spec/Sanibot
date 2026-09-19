@@ -19,12 +19,10 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
     if has_position:
         return Signal(SignalType.NONE, False, False, "NONE")
 
-    # Standard bar-to-bar execution (no long cooldown)
     now = time.time()
     if (now - _last_signal_time) < 1700:
         return Signal(SignalType.NONE, False, False, "NONE")
 
-    # Client ATR Gating: 220 threshold
     if snap.atr < 220.0:
         return Signal(SignalType.NONE, False, False, "NONE")
 
@@ -68,7 +66,7 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
         _last_signal_time = now
         return Signal(SignalType.TREND_LONG, is_long=True, is_trend=True, regime="TREND")
 
-    # SHORT: 30m breakdown + 30m 9/15 EMA alignment + 1-Hour 15 EMA confirmation
+    # SHORT: Breakdown below prev low, 30m EMA alignment, 1H HTF confirmation
     if (short_trigger
             and htf_short_ok
             and snap.close < snap.ema_fast
