@@ -1,66 +1,64 @@
 """
-strategy/trend_breakout.py — Shiva Sniper Bot-v10
-Optimized with Wick Filter, Candle Range Location, and Flat EMA Gate
+strategy/trend_breakout.py — Shiva Sniper Bot-v10 / Sanibot (Delta Exchange India)
+30m Execution with 1-Hour (1H) 15 EMA Alignment Filter
 """
 from __future__ import annotations
 import time
 
 from indicators.engine import Signal, SignalType, IndicatorSnapshot
 from strategy.guards import passes_extension_guard
-from config import ADX_TREND_TH, BREAKOUT_BUFFER_PTS
+from config import ADX_TREND_TH, BREAKOUT_BUFFER_PTS, OPT_HTF_TREND_ENABLED
 
 _last_signal_time = 0.0
 _prev_adx = 0.0
 
 
 def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
-    """
-    Trend Breakout entry evaluation for a confirmed bar.
-    Direction: Price relative to 50 EMA and 200 EMA.
-    Extension Guard: <= 1.8x ATR distance from 50 EMA (blocks late chasing).
-    Wick Guard: Rejects candles where wick > body or closing in rejection zone.
-    """
     global _last_signal_time, _prev_adx
 
     if has_position:
         return Signal(SignalType.NONE, False, False, "NONE")
 
-    # 1. 1-Candle Cooldown: Prevent re-entering within 28 minutes of last entry
+    # Standard bar-to-bar execution (no long cooldown)
     now = time.time()
     if (now - _last_signal_time) < 1700:
         return Signal(SignalType.NONE, False, False, "NONE")
 
-    # 2. Client ATR Gating: 220 threshold
+    # Client ATR Gating: 220 threshold
     if snap.atr < 220.0:
         return Signal(SignalType.NONE, False, False, "NONE")
 
-    # 2b. Dynamic ADX Velocity & Rising Momentum Gate (Blocks chop, catches trends early)
+    # Dynamic ADX Velocity & Rising Momentum Gate
     curr_adx = getattr(snap, "adx", 25.0)
     is_rising = (curr_adx > _prev_adx) if _prev_adx > 0 else True
     _prev_adx = curr_adx
     if curr_adx < 16.0 or not is_rising:
         return Signal(SignalType.NONE, False, False, "NONE")
 
-    # 3. Trend & Filter Checks
+    # Trend & Filter Checks
     if not snap.trend_regime or not snap.filters_ok:
         return Signal(SignalType.NONE, False, False, "NONE")
 
-    # 4. Flat / Tangled EMA Gate (Minimum separation required)
+    # 1-Hour Higher Timeframe (1H) Alignment Check (15 EMA)
+    htf_long_ok = (getattr(snap, "htf_trend_up", 1.0) > 0.5) if OPT_HTF_TREND_ENABLED else True
+    htf_short_ok = (getattr(snap, "htf_trend_down", 1.0) > 0.5) if OPT_HTF_TREND_ENABLED else True
+
+    # Flat / Tangled EMA Gate (30m 9 & 15 EMA separation)
     if abs(snap.ema_fast - snap.ema_trend) < (0.05 * snap.atr):
         return Signal(SignalType.NONE, False, False, "NONE")
 
-    # 5. Candle Geometry: Body & Wicks
+    # Candle Geometry: Body & Wicks
     body = abs(snap.close - snap.open)
     upper_wick = snap.high - max(snap.open, snap.close)
     lower_wick = min(snap.open, snap.close) - snap.low
     candle_range = snap.high - snap.low
 
-    # 6. Clean Breakout Triggers (Strict Breakout of Previous Extreme)
     long_trigger = (snap.close > snap.prev_high + BREAKOUT_BUFFER_PTS)
     short_trigger = (snap.close < snap.prev_low - BREAKOUT_BUFFER_PTS)
 
-    # LONG: Breakout above prev high, EMA alignment, strong bull body (No Shooting Star)
+    # LONG: 30m breakout + 30m 9/15 EMA alignment + 1-Hour 15 EMA confirmation
     if (long_trigger
+            and htf_long_ok
             and snap.close > snap.ema_fast
             and snap.close > snap.ema_trend
             and snap.dip > snap.dim
@@ -70,8 +68,9 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
         _last_signal_time = now
         return Signal(SignalType.TREND_LONG, is_long=True, is_trend=True, regime="TREND")
 
-    # SHORT: Breakdown below prev low, EMA alignment, strong bear body (No Hammer)
+    # SHORT: 30m breakdown + 30m 9/15 EMA alignment + 1-Hour 15 EMA confirmation
     if (short_trigger
+            and htf_short_ok
             and snap.close < snap.ema_fast
             and snap.close < snap.ema_trend
             and snap.dim > snap.dip
