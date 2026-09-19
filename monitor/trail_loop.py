@@ -2185,3 +2185,50 @@ class TrailMonitor:
     # Back-compat alias — old name, new (field-correct) behaviour.
     async def _get_mark_price(self) -> Optional[float]:
         return await self._get_trail_price()
+
+
+# ================================================================
+# DUAL-TRANCHE DYNAMIC TRAILING STOP ENGINE
+# ================================================================
+def calculate_tranche_stops(tranche_id: int, entry_price: float, current_price: float, 
+                            mfe: float, is_long: bool, atr: float, htf_2h_ema: float = 0.0) -> tuple[float, bool]:
+    """
+    Returns (new_sl_price, should_take_profit) for each specific tranche.
+    """
+    profit_pts = (current_price - entry_price) if is_long else (entry_price - current_price)
+    peak_profit = (mfe - entry_price) if is_long else (entry_price - mfe)
+
+    # 1. TRANCHE 1: The Cash Bank (Fixed Target + 165-pt Ratchet)
+    if tranche_id == 1:
+        if profit_pts >= 360.0:
+            return (current_price, True)  # Take Profit Hit (+360 pts)
+        
+        # Breakeven Shield at +140 pts
+        if peak_profit >= 140.0:
+            be_sl = (entry_price + 25.0) if is_long else (entry_price - 25.0)
+            if peak_profit >= 400.0:
+                trail_sl = (mfe - 165.0) if is_long else (mfe + 165.0)
+                return (max(be_sl, trail_sl) if is_long else min(be_sl, trail_sl), False)
+            return (be_sl, False)
+        
+        initial_sl = (entry_price - 180.0) if is_long else (entry_price + 180.0)
+        return (initial_sl, False)
+
+    # 2. TRANCHE 2: The Mega-Runner (Trails 2H 15 EMA / Wide Cushion)
+    if tranche_id == 2:
+        if peak_profit >= 140.0:
+            be_sl = (entry_price + 25.0) if is_long else (entry_price - 25.0)
+            
+            # When profit exceeds +600 pts, trail the 2H 15 EMA line (absorbs 450-pt pullbacks)
+            if peak_profit >= 600.0 and htf_2h_ema > 0:
+                return (max(be_sl, htf_2h_ema) if is_long else min(be_sl, htf_2h_ema), False)
+            
+            # Fallback wide cushion (1.5x ATR ~ 380 pts)
+            cushion = max(350.0, 1.5 * atr)
+            wide_trail = (mfe - cushion) if is_long else (mfe + cushion)
+            return (max(be_sl, wide_trail) if is_long else min(be_sl, wide_trail), False)
+
+        initial_sl = (entry_price - 180.0) if is_long else (entry_price + 180.0)
+        return (initial_sl, False)
+
+    return ((entry_price - 180.0) if is_long else (entry_price + 180.0), False)
