@@ -25,7 +25,7 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
 
     now = time.time()
     # 1. 2-Hour Cooldown after trade exit
-    if (now - _last_signal_time) < 7200:
+    if (now - _last_signal_time) < 1800.0:
         return Signal(SignalType.NONE, False, False, "NONE")
 
     # 2. Asian Dead-Zone Filter: Block entries 02:00 to 07:00 IST
@@ -34,8 +34,8 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
     if 2 <= ist_hour < 7:
         return Signal(SignalType.NONE, False, False, "DEAD_ZONE_FILTER")
 
-    # 3. Client ATR Minimum Gate: 220 threshold
-    if snap.atr < 220.0:
+    # 3. Client ATR Minimum Gate: 180.0 threshold
+    if snap.atr < 180.0:
         return Signal(SignalType.NONE, False, False, "NONE")
 
     # 4. Flat / Tangled EMA Gate (0.08x ATR minimum separation required)
@@ -59,8 +59,8 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
     if len(_recent_highs) < 7:
         return Signal(SignalType.NONE, False, False, "NONE")
 
-    box_high = max(_recent_highs[-7:-1])
-    box_low = min(_recent_lows[-7:-1])
+    box_high = max(_recent_highs[-5:-1])
+    box_low = min(_recent_lows[-5:-1])
 
     # 7. Candle Geometry & Wick Guards
     body = abs(snap.close - snap.open)
