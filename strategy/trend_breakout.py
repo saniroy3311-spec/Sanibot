@@ -73,7 +73,7 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
     short_breakout = (snap.close < box_low - BREAKOUT_BUFFER_PTS)
 
     if (long_breakout
-            and snap.htf_trend_up > 0.5
+            and getattr(snap, 'htf_trend_up', (snap.close > getattr(snap, 'ema_trend', snap.close)))
             and snap.close > snap.ema_fast
             and snap.close > snap.ema_trend
             and snap.dip > snap.dim
@@ -84,7 +84,7 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
         return Signal(SignalType.TREND_LONG, is_long=True, is_trend=True, regime="BREAKOUT")
 
     if (short_breakout
-            and snap.htf_trend_down > 0.5
+            and getattr(snap, 'htf_trend_down', (snap.close < getattr(snap, 'ema_trend', snap.close)))
             and snap.close < snap.ema_fast
             and snap.close < snap.ema_trend
             and snap.dim > snap.dip
@@ -97,7 +97,7 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
     # Strategy 2: Pullback Dip Retest
     dist_to_ema15 = abs(snap.close - snap.ema_trend)
     if dist_to_ema15 <= (0.35 * snap.atr):
-        if (snap.htf_trend_up > 0.5
+        if (getattr(snap, 'htf_trend_up', (snap.close > getattr(snap, 'ema_trend', snap.close)))
                 and snap.close > snap.open
                 and snap.low <= snap.ema_trend
                 and snap.close > snap.ema_trend
@@ -105,7 +105,7 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
             _last_signal_time = now
             return Signal(SignalType.TREND_LONG, is_long=True, is_trend=False, regime="PULLBACK")
 
-        if (snap.htf_trend_down > 0.5
+        if (getattr(snap, 'htf_trend_down', (snap.close < getattr(snap, 'ema_trend', snap.close)))
                 and snap.close < snap.open
                 and snap.high >= snap.ema_trend
                 and snap.close < snap.ema_trend
