@@ -35,7 +35,7 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
         return Signal(SignalType.NONE, False, False, "DEAD_ZONE_FILTER")
 
     # 3. Client ATR Minimum Gate: 180.0 threshold
-    if snap.atr < 180.0:
+    if snap.atr < float(os.getenv('ATR_MIN', '140.0')):
         return Signal(SignalType.NONE, False, False, "NONE")
 
     # 4. Flat / Tangled EMA Gate (0.08x ATR minimum separation required)
@@ -46,7 +46,7 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
     curr_adx = getattr(snap, "adx", 25.0)
     is_rising = (curr_adx > _prev_adx) if _prev_adx > 0 else True
     _prev_adx = curr_adx
-    if curr_adx < 16.0 or not is_rising:
+    if curr_adx < float(os.getenv('ADX_TREND_TH', '14.0')) or not is_rising:
         return Signal(SignalType.NONE, False, False, "NONE")
 
     # 6. Track Rolling 6-Bar Consolidation Box (3-Hour Range)
@@ -59,8 +59,8 @@ def evaluate(snap: IndicatorSnapshot, has_position: bool = False) -> Signal:
     if len(_recent_highs) < 7:
         return Signal(SignalType.NONE, False, False, "NONE")
 
-    box_high = max(_recent_highs[-5:-1])
-    box_low = min(_recent_lows[-5:-1])
+    box_high = max(_recent_highs[-3:-1])
+    box_low = min(_recent_lows[-3:-1])
 
     # 7. Candle Geometry & Wick Guards
     body = abs(snap.close - snap.open)
