@@ -106,7 +106,10 @@ Once BE fires, trail continues but SL can never go worse than entry.
 """
 from __future__ import annotations
 
-def calculate_dynamic_cushion(profit_pts, base_cushion=110.0, adx=25.0):
+def calculate_dynamic_cushion(profit_pts, base_cushion=110.0, adx=25.0, is_runner=False):
+    import os
+    if is_runner:
+        return float(os.getenv('RUNNER_TRAIL_OFFSET', '220.0'))
     if adx < 18.0:
         return 95.0
     if profit_pts >= 400.0:
@@ -2196,6 +2199,28 @@ def calculate_tranche_stops(tranche_id: int, entry_price: float, current_price: 
     Returns (new_sl_price, should_take_profit) for each specific tranche.
     """
     profit_pts = (current_price - entry_price) if is_long else (entry_price - current_price)
+    # ── 50/50 DUAL-TRANCHE PARTIAL TP ENGINE ──
+    partial_enabled = os.getenv("PARTIAL_TP_ENABLED", "false").lower() == "true"
+    partial_tp_pts = float(os.getenv("PARTIAL_TP_PTS", "350.0"))
+    partial_ratio = float(os.getenv("PARTIAL_TP_RATIO", "0.5"))
+    be_lock_pts = float(os.getenv("BE_LOCK_PTS", "50.0"))
+
+    tranche_1_done = getattr(self, "_tranche_1_done", False)
+    if partial_enabled and not tranche_1_done and profit_pts >= partial_tp_pts:
+        total_lots = getattr(self, "qty", 4)
+        lots_to_close = max(1, int(total_lots * partial_ratio))
+        om = getattr(self, "order_manager", None) or getattr(self, "om", None)
+        if om and hasattr(om, "close_partial"):
+            success = om.close_partial(lots=lots_to_close, reason="Tranche 1 TP (+350 pts)")
+            if success:
+                self._tranche_1_done = True
+                self._is_runner = True
+                entry_p = getattr(self, "entry_price", None) or locals().get("entry_price", 0.0)
+                is_l = getattr(self, "is_long", True) or locals().get("is_long", True)
+                be_sl = entry_p + be_lock_pts if is_l else entry_p - be_lock_pts
+                if hasattr(om, "update_stop_loss") and be_sl > 0:
+                    om.update_stop_loss(be_sl)
+                print(f"[TRANCHE] 🏆 Tranche 1 Locked: {lots_to_close} lots closed at +{profit_pts:.1f} pts! Runner SL set to {be_sl}")
     peak_profit = (mfe - entry_price) if is_long else (entry_price - mfe)
 
     # 1. TRANCHE 1: The Cash Bank (Fixed Target + 165-pt Ratchet)

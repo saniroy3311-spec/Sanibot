@@ -328,6 +328,33 @@ class OrderManager:
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
+    def close_partial(self, lots: int, reason: str = "Partial TP"):
+        """Closes a specific number of lots (reduce-only) to lock in partial profits."""
+        try:
+            import os
+            product_id = int(getattr(self, "product_id", 27))
+            current_pos = getattr(self, "position", None) or getattr(self, "active_position", None)
+            is_long = True
+            if current_pos:
+                is_long = getattr(current_pos, "is_long", True)
+            
+            close_side = "sell" if is_long else "buy"
+            client = getattr(self, "client", None) or getattr(self, "delta_client", None)
+            
+            if client:
+                res = client.place_order(
+                    product_id=product_id,
+                    size=int(lots),
+                    side=close_side,
+                    order_type="market_order",
+                    reduce_only=True
+                )
+                print(f"[OM] ✅ Partial Close Executed: {lots} lots closed via {close_side} market ({reason}) | Res: {res}")
+                return True
+        except Exception as e:
+            print(f"[OM] ❌ Error in close_partial: {e}")
+            return False
+
     def set_atr(self, atr: float) -> None:
         """
         Cache the latest ATR value.
