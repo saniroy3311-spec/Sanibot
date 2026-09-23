@@ -49,3 +49,7 @@ venv/
 
 # One-shot install/update scripts
 install_update.py
+.env
+venv/
+*.db
+__pycache__/

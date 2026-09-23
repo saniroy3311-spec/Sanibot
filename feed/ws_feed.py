@@ -1,3 +1,4 @@
+import os
 """
 feed/ws_feed.py  —  Shiva Sniper v10  (DELTA-TICK-FIX-v1)
 """

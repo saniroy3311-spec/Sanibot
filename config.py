@@ -527,6 +527,7 @@ MAX_EXIT_SLIPPAGE_ATR_PCT = float(os.environ.get("MAX_EXIT_SLIPPAGE_ATR_PCT", "2
 # ADX Filter — block entries in low-trend markets (chop/sideways)
 # Pine uses ADX to distinguish trend vs range. Higher = stricter trend requirement.
 ADX_TREND_TH = int(float(os.environ.get("ADX_TREND_TH", "22")))
+OPT_ADX_TREND_TH       = float(os.environ.get("OPT_ADX_TREND_TH", "22"))
 OPT_ADX_RANGE_TH       = float(os.environ.get("OPT_ADX_RANGE_TH", "15"))
 OPT_ADX_MIN_FILTER     = float(os.environ.get("OPT_ADX_MIN_FILTER", "24"))
 
