@@ -125,7 +125,7 @@ class Telegram:
         entry_p = float(entry_price)
         exit_p = float(exit_price)
         pts = (exit_p - entry_p) if is_long else (entry_p - exit_p)
-        pl_usd = float(real_pl)
+        pl_usd = round(pts * (float(qty) * 0.001), 2)
         pl_inr = pl_usd * 84.0
 
         if pts > 200:
