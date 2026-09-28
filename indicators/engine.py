@@ -53,6 +53,7 @@ from __future__ import annotations
 from strategy.guards import passes_extension_guard
 
 import logging
+import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -72,6 +73,8 @@ from config import (
     MAX_SL_MULT, MAX_SL_POINTS, TRAIL_STAGES, BE_MULT,
     COMMISSION_PCT,
     BREAKOUT_BUFFER_PTS,   # FIX-BREAKOUT-BUFFER: wire into entry condition
+    OPT_HTF_TREND_ENABLED, OPT_HTF_EMA_LEN, OPT_HTF_TIMEFRAME,
+    CANDLE_TIMEFRAME, BREAKOUT_BOX_BARS, STRUCTURE_LOOKBACK_BARS,
 )
 
 # FIX-1: RiskLevels and TrailState were used but never imported or defined.
@@ -151,6 +154,15 @@ class IndicatorSnapshot:
     prev_high:    float
     prev_low:     float
     timestamp:    int
+    # Smart-entry additions. Defaults preserve compatibility with old test/backtest
+    # code that instantiates IndicatorSnapshot directly.
+    htf_ema:              float = 0.0
+    htf_trend_up:         bool = False
+    htf_trend_down:       bool = False
+    box_high:             float = 0.0
+    box_low:              float = 0.0
+    structure_long_ok:    bool = True
+    structure_short_ok:   bool = True
 
 
 # ─── JIT-compiled inner loops ─────────────────────────────────────────────────
@@ -304,6 +316,65 @@ def _dmi_series(
     return plus_di, minus_di, adx_raw
 
 
+# ─── Smart-entry helpers ───────────────────────────────────────────────────────
+def _tf_minutes(tf: str) -> int:
+    tf = str(tf).strip().lower()
+    if tf.endswith("m"):
+        return max(1, int(tf[:-1]))
+    if tf.endswith("h"):
+        return max(1, int(tf[:-1]) * 60)
+    if tf.endswith("d"):
+        return max(1, int(tf[:-1]) * 1440)
+    return 30
+
+
+def _confirmed_htf_ema(df: pd.DataFrame) -> tuple[float, bool, bool]:
+    """Build confirmed HTF closes from the base candles and calculate HTF EMA."""
+    if not OPT_HTF_TREND_ENABLED:
+        return 0.0, True, True
+
+    base_min = _tf_minutes(CANDLE_TIMEFRAME)
+    htf_min = _tf_minutes(OPT_HTF_TIMEFRAME)
+    bars_per_htf = max(1, int(round(htf_min / max(base_min, 1))))
+
+    tmp = pd.DataFrame({
+        "timestamp": pd.to_datetime(df["timestamp"].astype("int64"), unit="ms", utc=True),
+        "close": df["close"].astype(float).values,
+    })
+    # Floor timestamps so e.g. 00:00 and 00:30 belong to the same 1H candle.
+    rule = f"{htf_min}min"
+    tmp["bucket"] = tmp["timestamp"].dt.floor(rule)
+    grouped = tmp.groupby("bucket", sort=True).agg(close=("close", "last"), count=("close", "size"))
+    confirmed = grouped[grouped["count"] >= bars_per_htf]["close"]
+
+    if len(confirmed) < max(OPT_HTF_EMA_LEN, 2):
+        return 0.0, True, True
+
+    ema = float(_ema(confirmed, OPT_HTF_EMA_LEN).iloc[-1])
+    htf_close = float(confirmed.iloc[-1])
+    return ema, bool(htf_close > ema), bool(htf_close < ema)
+
+
+def _structure_flags(df: pd.DataFrame) -> tuple[bool, bool]:
+    """Loose directional-progress filter; not a strict HH/HL sequence requirement."""
+    n = max(3, int(STRUCTURE_LOOKBACK_BARS))
+    if len(df) < n:
+        return True, True
+
+    recent = df.iloc[-n:]
+    highs = recent["high"].astype(float).to_numpy()
+    lows = recent["low"].astype(float).to_numpy()
+
+    up_steps = int((np.diff(highs) > 0).sum()) + int((np.diff(lows) > 0).sum())
+    down_steps = int((np.diff(highs) < 0).sum()) + int((np.diff(lows) < 0).sum())
+    total_steps = max(1, 2 * (len(recent) - 1))
+
+    # Require only a simple majority. A strong breakout candle can still bypass
+    # this in strategy/trend_breakout.py.
+    need = max(2, int(math.ceil(total_steps * 0.50)))
+    return up_steps >= need, down_steps >= need
+
+
 # ─── Main compute functions ────────────────────────────────────────────────────
 
 def compute(df: pd.DataFrame) -> IndicatorSnapshot:
@@ -346,6 +417,13 @@ def compute(df: pd.DataFrame) -> IndicatorSnapshot:
     adx_smoothed = float(_ema(adx_raw_s, ADX_EMA).iloc[-1])
 
     vol_sma = float(df["volume"].rolling(20).mean().iloc[-1])
+
+    # Confirmed higher-timeframe direction, breakout box and loose market structure.
+    htf_ema, htf_up, htf_down = _confirmed_htf_ema(df)
+    prev_box = df.iloc[-(BREAKOUT_BOX_BARS + 1):-1] if len(df) > BREAKOUT_BOX_BARS else df.iloc[:-1]
+    box_high = float(prev_box["high"].max()) if not prev_box.empty else float(prev["high"])
+    box_low = float(prev_box["low"].min()) if not prev_box.empty else float(prev["low"])
+    structure_long_ok, structure_short_ok = _structure_flags(df)
 
     trend_regime = adx_smoothed > (ADX_TREND_TH - ADX_TOLERANCE)
     range_regime = adx_smoothed < (ADX_RANGE_TH + ADX_TOLERANCE)
@@ -401,6 +479,13 @@ def compute(df: pd.DataFrame) -> IndicatorSnapshot:
         prev_high    = float(prev["high"]),
         prev_low     = float(prev["low"]),
         timestamp    = int(last.get("timestamp", 0)),
+        htf_ema      = htf_ema,
+        htf_trend_up = htf_up,
+        htf_trend_down = htf_down,
+        box_high     = box_high,
+        box_low      = box_low,
+        structure_long_ok = structure_long_ok,
+        structure_short_ok = structure_short_ok,
     )
 
 
