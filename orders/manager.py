@@ -100,7 +100,7 @@ import ccxt.async_support as ccxt
 from config import (
     PAPER_MODE,
     DELTA_API_KEY, DELTA_API_SECRET, DELTA_TESTNET,
-    SYMBOL, ALERT_QTY, DRY_RUN, MAX_POSITION_LOTS,
+    SYMBOL, ALERT_QTY, DRY_RUN, MAX_POSITION_LOTS, PARTIAL_VERIFY_RETRIES,
 )
 
 logger = logging.getLogger("orders.manager")
@@ -328,32 +328,136 @@ class OrderManager:
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
-    def close_partial(self, lots: int, reason: str = "Partial TP"):
-        """Closes a specific number of lots (reduce-only) to lock in partial profits."""
-        try:
-            import os
-            product_id = int(getattr(self, "product_id", 27))
-            current_pos = getattr(self, "position", None) or getattr(self, "active_position", None)
-            is_long = True
-            if current_pos:
-                is_long = getattr(current_pos, "is_long", True)
-            
-            close_side = "sell" if is_long else "buy"
-            client = getattr(self, "client", None) or getattr(self, "delta_client", None)
-            
-            if client:
-                res = client.place_order(
-                    product_id=product_id,
-                    size=int(lots),
-                    side=close_side,
-                    order_type="market_order",
-                    reduce_only=True
+    async def close_partial(
+        self,
+        lots: int,
+        reason: str = "Partial TP",
+        is_long: Optional[bool] = None,
+    ) -> dict:
+        """
+        Close only part of the live Delta position with a reduce-only market
+        order, then verify the remaining contract count on Delta.
+
+        IMPORTANT: this does NOT cancel the emergency position bracket; the
+        bracket remains the crash/disconnect safety net for the remaining lots.
+        """
+        requested = int(lots)
+        if requested <= 0:
+            raise ValueError(f"partial close lots must be > 0, got {lots!r}")
+
+        if DRY_RUN or PAPER_MODE:
+            ticker = await self.fetch_ticker()
+            fill = float((ticker or {}).get("last") or (ticker or {}).get("close") or 0.0)
+            return {
+                "id": f"paper-partial-{int(time.time() * 1000)}",
+                "average": fill,
+                "price": fill,
+                "closed_lots": requested,
+                "remaining_lots": max(0, ALERT_QTY - requested),
+                "verified": True,
+                "info": {"paper_trade": True, "reason": reason},
+            }
+
+        before = await self.fetch_open_position()
+        if before is None:
+            raise RuntimeError("partial close blocked: Delta reports no open position")
+
+        before_qty = int(round(float(before.get("contracts") or 0)))
+        if before_qty <= 1:
+            raise RuntimeError(
+                f"partial close blocked: only {before_qty} lot(s) remain; full close required"
+            )
+
+        close_qty = min(requested, before_qty - 1)
+        actual_is_long = bool(before.get("is_long")) if is_long is None else bool(is_long)
+        if is_long is not None and bool(before.get("is_long")) != bool(is_long):
+            raise RuntimeError(
+                "partial close blocked: local direction disagrees with Delta position direction"
+            )
+
+        side = "sell" if actual_is_long else "buy"
+        logger.info(
+            f"[OM] Partial close | before={before_qty} close={close_qty} "
+            f"side={side} reason={reason}"
+        )
+
+        order = await _retry(lambda: self.exchange.create_order(
+            symbol=SYMBOL,
+            type="market",
+            side=side,
+            amount=close_qty,
+            params={"reduce_only": True},
+        ))
+
+        expected_remaining = before_qty - close_qty
+        remaining = None
+        verified = False
+        for attempt in range(1, PARTIAL_VERIFY_RETRIES + 1):
+            try:
+                pos = await self.fetch_open_position()
+                remaining = 0 if pos is None else int(round(float(pos.get("contracts") or 0)))
+                if remaining == expected_remaining:
+                    verified = True
+                    break
+                logger.warning(
+                    f"[OM] Partial verify {attempt}/{PARTIAL_VERIFY_RETRIES}: "
+                    f"expected {expected_remaining}, Delta shows {remaining}"
                 )
-                print(f"[OM] ✅ Partial Close Executed: {lots} lots closed via {close_side} market ({reason}) | Res: {res}")
-                return True
-        except Exception as e:
-            print(f"[OM] ❌ Error in close_partial: {e}")
-            return False
+            except Exception as exc:
+                logger.warning(
+                    f"[OM] Partial verify {attempt}/{PARTIAL_VERIFY_RETRIES} UNKNOWN: {exc}"
+                )
+            if attempt < PARTIAL_VERIFY_RETRIES:
+                await asyncio.sleep(0.5 * attempt)
+
+        if not verified:
+            raise RuntimeError(
+                f"partial close order sent but remaining position was not verified "
+                f"(expected {expected_remaining}, observed {remaining})"
+            )
+
+        fill = float(order.get("average") or order.get("price") or 0.0)
+        if fill <= 0:
+            # Market-order responses can arrive before Delta publishes the fill.
+            # Prefer the exact order id so we never accidentally read the older
+            # entry trade as the partial fill.
+            order_id = order.get("id")
+            for attempt in range(1, 4):
+                try:
+                    if order_id:
+                        refreshed = await self.exchange.fetch_order(order_id, SYMBOL)
+                        fetched = refreshed.get("average") or refreshed.get("price")
+                        if fetched and float(fetched) > 0:
+                            fill = float(fetched)
+                            break
+                except Exception:
+                    pass
+                if attempt < 3:
+                    await asyncio.sleep(0.35 * attempt)
+
+        if fill <= 0:
+            # Last-resort fallback. Position-size verification above still proves
+            # the partial happened; only the fill price may be delayed.
+            try:
+                fetched = await self.fetch_bracket_fill_price()
+                if fetched and float(fetched) > 0:
+                    fill = float(fetched)
+            except Exception:
+                pass
+
+        logger.info(
+            f"[OM] ✅ Partial close verified | {before_qty}->{expected_remaining} lots "
+            f"fill={fill:.2f}"
+        )
+
+        result = dict(order or {})
+        result.update({
+            "closed_lots": close_qty,
+            "remaining_lots": expected_remaining,
+            "verified": True,
+            "average": fill if fill > 0 else result.get("average"),
+        })
+        return result
 
     def set_atr(self, atr: float) -> None:
         """
