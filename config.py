@@ -70,6 +70,7 @@ FIX:    on_bar_close() now updates self.atr = current_atr each bar.
 All changes are .env-overridable.
 """
 import os
+import math
 try:
     from dotenv import load_dotenv
     load_dotenv(override=True)
@@ -412,7 +413,7 @@ BREAKOUT_BUFFER_PTS = float(os.environ.get("BREAKOUT_BUFFER_PTS", "0"))
 # COMMISSION + BUFFERS
 # ──────────────────────────────────────
 COMMISSION_PCT           = 0.05 / 100   # Pine: commission_value=0.05 (percent)
-LOT_SIZE_BTC = 4.001         # Delta BTC perp: 1 lot = 0.001 BTC (used by risk/calculator P/L funcs)
+LOT_SIZE_BTC = float(os.environ.get("LOT_SIZE_BTC", "0.001"))  # Delta BTC perp: 1 lot = 0.001 BTC
 BRACKET_SL_BUFFER        = float(os.environ.get("BRACKET_SL_BUFFER",        "10.0"))
 TRAIL_SL_PRE_FIRE_BUFFER = float(os.environ.get("TRAIL_SL_PRE_FIRE_BUFFER", "0.0"))
 
@@ -577,6 +578,33 @@ PAPER_MODE = os.environ.get("PAPER_TRADING", "false").lower() == "true"
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
 TRADING_MODE = os.environ.get("TRADING_MODE", "LIVE").strip().upper()
 MAX_POSITION_LOTS = int(os.environ.get("MAX_POSITION_LOTS", "1"))
+
+# ──────────────────────────────────────────────────────────────────────
+# SMART 50/50 RUNNER + ENTRY QUALITY SETTINGS (2026-09-28)
+# ──────────────────────────────────────────────────────────────────────
+ATR_MIN = float(os.environ.get("ATR_MIN", os.environ.get("OPT_ATR_MIN_FILTER", "125.0")))
+ADX_REQUIRE_RISING = os.environ.get("ADX_REQUIRE_RISING", "true").lower() == "true"
+EMA_SEPARATION_ATR_MULT = float(os.environ.get("EMA_SEPARATION_ATR_MULT", "0.08"))
+BREAKOUT_BOX_BARS = max(2, int(os.environ.get("BREAKOUT_BOX_BARS", "3")))
+DEAD_ZONE_FILTER_ENABLED = os.environ.get("DEAD_ZONE_FILTER_ENABLED", "false").lower() == "true"
+DEAD_ZONE_START_HOUR_IST = int(os.environ.get("DEAD_ZONE_START_HOUR_IST", "2"))
+DEAD_ZONE_END_HOUR_IST = int(os.environ.get("DEAD_ZONE_END_HOUR_IST", "7"))
+STRUCTURE_FILTER_ENABLED = os.environ.get("STRUCTURE_FILTER_ENABLED", "true").lower() == "true"
+STRUCTURE_LOOKBACK_BARS = max(3, int(os.environ.get("STRUCTURE_LOOKBACK_BARS", "4")))
+EXTENSION_MAX_MULT = float(os.environ.get("EXTENSION_MAX_MULT", "2.2"))
+SIGNAL_COOLDOWN_SEC = int(os.environ.get("SIGNAL_COOLDOWN_SEC", "0"))
+WIN_COOLDOWN_SEC = int(os.environ.get("WIN_COOLDOWN_SEC", "180"))
+LOSS_COOLDOWN_BARS = max(0, int(os.environ.get("LOSS_COOLDOWN_BARS", "1")))
+
+PARTIAL_TP_ENABLED = os.environ.get("PARTIAL_TP_ENABLED", "false").lower() == "true"
+PARTIAL_TP_PTS = float(os.environ.get("PARTIAL_TP_PTS", "350.0"))
+PARTIAL_TP_RATIO = float(os.environ.get("PARTIAL_TP_RATIO", "0.50"))
+PRE_PARTIAL_TRAIL_ENABLED = os.environ.get("PRE_PARTIAL_TRAIL_ENABLED", "false").lower() == "true"
+RUNNER_BE_LOCK_PTS = float(os.environ.get("RUNNER_BE_LOCK_PTS", os.environ.get("BE_LOCK_PTS", "50.0")))
+RUNNER_WIDE_TRIGGER_PTS = float(os.environ.get("RUNNER_WIDE_TRIGGER_PTS", "600.0"))
+RUNNER_MIN_CUSHION_PTS = float(os.environ.get("RUNNER_MIN_CUSHION_PTS", "300.0"))
+RUNNER_ATR_MULT = float(os.environ.get("RUNNER_ATR_MULT", "1.25"))
+PARTIAL_VERIFY_RETRIES = max(1, int(os.environ.get("PARTIAL_VERIFY_RETRIES", "4")))
 
 if TRADING_MODE not in {"LIVE", "PAPER"}:
     raise ValueError(
