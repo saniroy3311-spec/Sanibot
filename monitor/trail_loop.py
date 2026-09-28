@@ -139,6 +139,10 @@ from config import (
     BAR_CLOSE_SL_EVAL,
     TP_HARD_EXIT,
     MAX_EXIT_SLIPPAGE_ATR_PCT,
+    PARTIAL_TP_ENABLED, PARTIAL_TP_PTS, PARTIAL_TP_RATIO,
+    PRE_PARTIAL_TRAIL_ENABLED, RUNNER_BE_LOCK_PTS,
+    RUNNER_WIDE_TRIGGER_PTS, RUNNER_MIN_CUSHION_PTS, RUNNER_ATR_MULT,
+    LOT_SIZE_BTC,
 )
 from risk.calculator import RiskLevels, TrailState
 
@@ -532,6 +536,17 @@ class TrailMonitor:
         self._pos_poll_ticks   : int = 0
         POSITION_POLL_TICKS    = 1   # check every tick-loop iteration (5s)
 
+        # 50/50 partial-profit + runner state.
+        self._initial_qty: int = 0
+        self._qty: int = 0
+        self._partial_done: bool = False
+        self._partial_in_flight: bool = False
+        self._partial_closed_qty: int = 0
+        self._partial_exit_price: float = 0.0
+        self._partial_realized_pl: float = 0.0
+        self._runner_mode: bool = False
+        self._on_partial_cb: Optional[Callable] = None
+
     # ── Start / Stop ──────────────────────────────────────────────────────────
     def start(
         self,
@@ -546,6 +561,7 @@ class TrailMonitor:
         signal_bar_close  : Optional[float] = None,
         qty               : Optional[int] = None,
         is_recovery       : bool = False,
+        on_partial        : Optional[Callable] = None,
     ) -> None:
         self._is_recovery  = bool(is_recovery)   # FIX-23
         self._risk         = risk_levels
@@ -555,11 +571,30 @@ class TrailMonitor:
         self._exit_fired   = False
         self._running      = True
         self._current_atr  = risk_levels.atr
-        self._qty          = qty
+        self._qty          = int(qty or 0)
+        self._initial_qty  = int(qty or 0)
+        self._on_partial_cb = on_partial
+        self._partial_in_flight = False
+        self._partial_closed_qty = 0
+        self._partial_exit_price = 0.0
+        self._partial_realized_pl = 0.0
+
+        # If the bot restarts while only the runner remains (for example 2 of
+        # the configured 4 lots), infer that the 50% partial already happened.
+        configured_total = int(os.environ.get("STATIC_TOTAL_LOTS", os.environ.get("DEFAULT_LOTS", "4")))
+        self._partial_done = bool(
+            PARTIAL_TP_ENABLED and is_recovery and self._qty > 0 and self._qty < configured_total
+        )
+        self._runner_mode = self._partial_done
+        if self._partial_done:
+            self._initial_qty = configured_total
 
         # Pine trail runtime state — reset on every new trade
-        trail_state.trail_armed = False 
-        trail_state.best_price  = 0.0
+        trail_state.trail_armed = bool(self._runner_mode)
+        trail_state.best_price  = risk_levels.entry_price if self._runner_mode else 0.0
+        if self._runner_mode:
+            trail_state.be_done = True
+            trail_state.current_sl = self._runner_lock_price()
         # current_sl already set to risk.sl by main.py (correct initial SL)
 
         self._entry_wall_ms = entry_wall_ms if entry_wall_ms is not None else int(time.time() * 1000)
@@ -692,6 +727,210 @@ class TrailMonitor:
         gap = float(getattr(self._feed, "last_mark_last_divergence", 0.0) or 0.0)
         return max(0.0, min(gap, atr * 0.40))
 
+    # ── 50/50 partial-profit + runner helpers ───────────────────────────────
+    def _runner_lock_price(self) -> float:
+        if self._risk is None:
+            return 0.0
+        entry = float(self._risk.entry_price)
+        return entry + RUNNER_BE_LOCK_PTS if self._risk.is_long else entry - RUNNER_BE_LOCK_PTS
+
+    def _runner_peak_profit(self) -> float:
+        if self._risk is None or self._state is None:
+            return 0.0
+        best = float(getattr(self._state, "best_price", 0.0) or 0.0)
+        if best <= 0:
+            return 0.0
+        entry = float(self._risk.entry_price)
+        return (best - entry) if self._risk.is_long else (entry - best)
+
+    def _update_runner_sl(self, price: float, update_best: bool = True, source: str = "runner") -> None:
+        """Keep a +50pt floor, then use a wide ATR trail after +600pt MFE."""
+        risk = self._risk
+        state = self._state
+        if risk is None or state is None or not self._runner_mode:
+            return
+
+        if update_best:
+            self._update_best_price(state, price, risk.is_long)
+
+        lock_sl = self._runner_lock_price()
+        new_sl = lock_sl
+        peak_profit = self._runner_peak_profit()
+
+        if peak_profit >= RUNNER_WIDE_TRIGGER_PTS and state.best_price > 0:
+            cushion = max(RUNNER_MIN_CUSHION_PTS, self._current_atr * RUNNER_ATR_MULT)
+            wide_sl = (
+                state.best_price - cushion
+                if risk.is_long
+                else state.best_price + cushion
+            )
+            new_sl = max(lock_sl, wide_sl) if risk.is_long else min(lock_sl, wide_sl)
+
+        state.be_done = True
+        state.trail_armed = True
+        self._trail_ever_armed = True
+        self._apply_trail_sl(state, risk, new_sl, risk.is_long, source=source)
+
+    async def _maybe_partial_tp(self, price: float, source: str) -> bool:
+        """Close the configured first tranche once +PARTIAL_TP_PTS is reached."""
+        if (
+            not PARTIAL_TP_ENABLED
+            or self._partial_done
+            or self._partial_in_flight
+            or self._risk is None
+            or self._state is None
+            or self._qty <= 1
+            or source != "delta"
+        ):
+            return False
+
+        risk = self._risk
+        profit_pts = (price - risk.entry_price) if risk.is_long else (risk.entry_price - price)
+        if profit_pts < PARTIAL_TP_PTS:
+            return False
+
+        initial_qty = max(self._initial_qty, self._qty)
+        close_qty = max(1, int(round(initial_qty * PARTIAL_TP_RATIO)))
+        close_qty = min(close_qty, self._qty - 1)
+        if close_qty <= 0:
+            return False
+
+        self._partial_in_flight = True
+        try:
+            result = await self._order_mgr.close_partial(
+                lots=close_qty,
+                reason=f"50% Partial TP (+{PARTIAL_TP_PTS:.0f} pts)",
+                is_long=risk.is_long,
+            )
+            remaining = int(result.get("remaining_lots", self._qty - close_qty))
+            closed = int(result.get("closed_lots", close_qty))
+            fill = float(result.get("average") or result.get("price") or price)
+            if fill <= 0:
+                fill = float(price)
+
+            partial_points = (fill - risk.entry_price) if risk.is_long else (risk.entry_price - fill)
+            partial_pl = partial_points * closed * LOT_SIZE_BTC
+
+            self._partial_done = True
+            self._runner_mode = True
+            self._partial_closed_qty = closed
+            self._partial_exit_price = fill
+            self._partial_realized_pl = partial_pl
+            self._qty = remaining
+
+            state = self._state
+            state.trail_armed = True
+            state.be_done = True
+            state.stage = max(int(getattr(state, "stage", 0)), 1)
+            state.best_price = fill
+            state.current_sl = self._runner_lock_price()
+            self._trail_ever_armed = True
+
+            logger.info(
+                f"[PARTIAL] ✅ {closed} lots closed @ {fill:.2f}; "
+                f"remaining={remaining}; runner_floor={state.current_sl:.2f}"
+            )
+
+            if self._on_partial_cb is not None:
+                try:
+                    maybe = self._on_partial_cb(
+                        closed_qty=closed,
+                        remaining_qty=remaining,
+                        exit_price=fill,
+                        real_pl=partial_pl,
+                    )
+                    if asyncio.iscoroutine(maybe):
+                        await maybe
+                except Exception as exc:
+                    logger.warning(f"[PARTIAL] callback failed: {exc}")
+
+            if self._telegram is not None:
+                try:
+                    await self._telegram.notify_partial(
+                        entry_price=risk.entry_price,
+                        exit_price=fill,
+                        is_long=risk.is_long,
+                        closed_qty=closed,
+                        remaining_qty=remaining,
+                        points=partial_points,
+                        real_pl=partial_pl,
+                        runner_sl=state.current_sl,
+                    )
+                except Exception as exc:
+                    logger.warning(f"[PARTIAL] Telegram failed: {exc}")
+            return True
+        except Exception as exc:
+            logger.error(f"[PARTIAL] ❌ Partial close failed: {exc}", exc_info=True)
+            try:
+                if self._telegram is not None:
+                    await self._telegram.send(
+                        "⚠️ <b>50% PARTIAL CLOSE FAILED</b>\n"
+                        f"Trigger reached +{PARTIAL_TP_PTS:.0f} pts, but Delta did not verify the size reduction.\n"
+                        "Runner mode was NOT activated."
+                    )
+            except Exception:
+                pass
+            return False
+        finally:
+            self._partial_in_flight = False
+
+    async def _evaluate_dual_tranche_tick(self, price: float, source: str, update_best: bool) -> None:
+        risk = self._risk
+        state = self._state
+        if risk is None or state is None:
+            return
+
+        # Partial is triggered only from authoritative Delta prices.
+        await self._maybe_partial_tp(price, source)
+
+        is_long = risk.is_long
+        entry_price = risk.entry_price
+        atr = max(self._current_atr, 1.0)
+
+        if self._partial_done and self._runner_mode:
+            self._update_runner_sl(price, update_best=update_best, source="runner_tick")
+            sl_level = state.current_sl + TRAIL_SL_PRE_FIRE_BUFFER if is_long else state.current_sl - TRAIL_SL_PRE_FIRE_BUFFER
+            if self._sl_confirmed(price, sl_level, is_long, source=source, trail_armed=True):
+                reason = (
+                    "Runner Trail SL"
+                    if self._runner_peak_profit() >= RUNNER_WIDE_TRIGGER_PTS
+                    else "Runner Protection SL"
+                )
+                await self._fire_exit(state.current_sl, reason, source="tick")
+                return
+        else:
+            # Before +350: keep initial/BE protection but do not squeeze the
+            # position with the legacy tight Stage-1 trail.
+            profit = (price - entry_price) if is_long else (entry_price - price)
+            if not state.be_done and profit > atr * BE_MULT:
+                self._activate_be(state, risk, is_long, atr, source="tick")
+
+            sl_level = state.current_sl + TRAIL_SL_PRE_FIRE_BUFFER if is_long else state.current_sl - TRAIL_SL_PRE_FIRE_BUFFER
+            skip_initial = BAR_CLOSE_SL_EVAL and not state.be_done
+            if not skip_initial and self._sl_confirmed(
+                price, sl_level, is_long, source=source, trail_armed=state.be_done
+            ):
+                reason = "Breakeven SL" if state.be_done else "Initial SL"
+                await self._fire_exit(price, reason, source="tick")
+                return
+
+            if not state.max_sl_fired:
+                entry_bar_over = (time.time() * 1000) >= self._entry_bar_end_ms
+                max_thresh = min(atr * MAX_SL_MULT, MAX_SL_POINTS)
+                if entry_bar_over:
+                    if is_long and price <= entry_price - max_thresh:
+                        state.max_sl_fired = True
+                        await self._fire_exit(price, "Max SL", source="tick")
+                        return
+                    if (not is_long) and price >= entry_price + max_thresh:
+                        state.max_sl_fired = True
+                        await self._fire_exit(price, "Max SL", source="tick")
+                        return
+
+        if TIME_EXIT_MINUTES > 0 and self._entry_bar_end_ms > 0:
+            if int(time.time() * 1000) >= self._entry_bar_end_ms:
+                await self._fire_exit(price, "Time exit (bar close)", source="tick")
+
     # ── Bar-close update ──────────────────────────────────────────────────────
     def on_bar_close(
         self,
@@ -763,6 +1002,52 @@ class TrailMonitor:
                     f"(atr={atr:.2f} stop_dist={_stop_dist:.2f}) "
                 )
             state.current_sl = _new_sl
+
+        # ── SMART 50/50 MODE: bypass the legacy pre-partial tight trail ─────
+        if PARTIAL_TP_ENABLED and (self._partial_done or not PRE_PARTIAL_TRAIL_ENABLED):
+            dual_profit = (bar_close - risk.entry_price) if is_long else (risk.entry_price - bar_close)
+            if not self._partial_done and not state.be_done and dual_profit > atr * BE_MULT:
+                self._activate_be(state, risk, is_long, atr, source="bar_close")
+
+            # IMPORTANT: evaluate this bar against the stop that was already
+            # active BEFORE using this same bar's favorable extreme to tighten
+            # the runner. Otherwise a short can make a fresh low late in the bar,
+            # tighten the SL, then be falsely marked stopped by a bar HIGH that
+            # actually happened earlier. Live Delta ticks own intrabar ordering;
+            # the bar-close path is only a safety fallback.
+            active_sl_before_bar = state.current_sl
+            if is_entry_bar:
+                return
+
+            tp_hit = TP_HARD_EXIT and ((bar_high >= risk.tp) if is_long else (bar_low <= risk.tp))
+            sl_hit = (bar_low <= active_sl_before_bar) if is_long else (bar_high >= active_sl_before_bar)
+            if tp_hit or sl_hit:
+                if tp_hit and not sl_hit:
+                    exit_px = risk.tp
+                    reason = "TP (bar)"
+                else:
+                    exit_px = active_sl_before_bar
+                    if self._runner_mode:
+                        reason = (
+                            "Runner Trail SL"
+                            if self._runner_peak_profit() >= RUNNER_WIDE_TRIGGER_PTS
+                            else "Runner Protection SL"
+                        )
+                    else:
+                        reason = "Breakeven SL" if state.be_done else "Initial SL (bar)"
+                logger.info(f"[TRAIL] Smart-mode bar exit: {reason} @ {exit_px:.2f}")
+                asyncio.get_running_loop().create_task(
+                    self._fire_exit(exit_px, reason, source="bar_close")
+                )
+                return
+
+            # No previously-active stop was crossed. Advance the runner from the
+            # favorable bar extreme for the NEXT tick/bar; do not look backward
+            # and apply the newly-tightened stop to earlier prices in this bar.
+            bar_extreme = bar_high if is_long else bar_low
+            if self._partial_done and self._runner_mode:
+                self._update_runner_sl(bar_extreme, update_best=True, source="runner_bar")
+            return
 
         # ── 3. Stage upgrade from bar-close profit (BAR-CLOSE ONLY) ─────────
         close_profit = (bar_close - entry_price) if is_long else (entry_price - bar_close)
@@ -1432,6 +1717,22 @@ class TrailMonitor:
                 await self._fire_exit(risk.tp, "TP", source="tick")
                 return
 
+        # SMART 50/50 mode owns pre-partial protection and the post-partial
+        # runner. The legacy staged trail remains available only when
+        # PRE_PARTIAL_TRAIL_ENABLED=true and the partial has not happened yet.
+        if PARTIAL_TP_ENABLED:
+            if self._partial_done or not PRE_PARTIAL_TRAIL_ENABLED:
+                await self._evaluate_dual_tranche_tick(
+                    price, source=source, update_best=(source == "delta")
+                )
+                return
+            await self._maybe_partial_tp(price, source)
+            if self._partial_done:
+                await self._evaluate_dual_tranche_tick(
+                    price, source=source, update_best=(source == "delta")
+                )
+                return
+
         # ── 2. Trail arm or initial SL ────────────────────────────────────────
         if not getattr(state, 'trail_armed', False):
             # Check activation: has price moved trail_arm_pts in profit direction?
@@ -1611,6 +1912,10 @@ class TrailMonitor:
         is_long     = risk.is_long
         entry_price = risk.entry_price
         atr          = self._current_atr
+
+        if PARTIAL_TP_ENABLED and (self._partial_done or not PRE_PARTIAL_TRAIL_ENABLED):
+            await self._evaluate_dual_tranche_tick(price, source="other", update_best=False)
+            return
 
         # ── 1. TP hit ─────────────────────────────────────────────────────────
         # FIX-TP-PARITY: gated behind TP_HARD_EXIT — see note above.
@@ -2144,6 +2449,11 @@ class TrailMonitor:
                     reason,
                     source,
                     True,   # position_already_closed
+                    exit_qty=self._qty,
+                    initial_qty=self._initial_qty,
+                    partial_qty=self._partial_closed_qty,
+                    partial_exit_price=self._partial_exit_price,
+                    partial_realized_pl=self._partial_realized_pl,
                 )
             except Exception as e:
                 logger.error(f"[TRAIL] exit callback error: {e}", exc_info=True)
@@ -2191,69 +2501,41 @@ class TrailMonitor:
 
 
 # ================================================================
-# DUAL-TRANCHE DYNAMIC TRAILING STOP ENGINE
+# DUAL-TRANCHE GEOMETRY HELPER (backward-compatible utility)
 # ================================================================
-def calculate_tranche_stops(tranche_id: int, entry_price: float, current_price: float, 
-                            mfe: float, is_long: bool, atr: float, htf_2h_ema: float = 0.0) -> tuple[float, bool]:
+def calculate_tranche_stops(
+    tranche_id: int,
+    entry_price: float,
+    current_price: float,
+    mfe: float,
+    is_long: bool,
+    atr: float,
+    htf_2h_ema: float = 0.0,
+) -> tuple[float, bool]:
     """
-    Returns (new_sl_price, should_take_profit) for each specific tranche.
-    """
-    profit_pts = (current_price - entry_price) if is_long else (entry_price - current_price)
-    # ── 50/50 DUAL-TRANCHE PARTIAL TP ENGINE ──
-    partial_enabled = os.getenv("PARTIAL_TP_ENABLED", "false").lower() == "true"
-    partial_tp_pts = float(os.getenv("PARTIAL_TP_PTS", "350.0"))
-    partial_ratio = float(os.getenv("PARTIAL_TP_RATIO", "0.5"))
-    be_lock_pts = float(os.getenv("BE_LOCK_PTS", "50.0"))
+    Pure geometry helper retained for old tools/backtests.
 
-    tranche_1_done = getattr(self, "_tranche_1_done", False)
-    if partial_enabled and not tranche_1_done and profit_pts >= partial_tp_pts:
-        total_lots = getattr(self, "qty", 4)
-        lots_to_close = max(1, int(total_lots * partial_ratio))
-        om = getattr(self, "order_manager", None) or getattr(self, "om", None)
-        if om and hasattr(om, "close_partial"):
-            success = om.close_partial(lots=lots_to_close, reason="Tranche 1 TP (+350 pts)")
-            if success:
-                self._tranche_1_done = True
-                self._is_runner = True
-                entry_p = getattr(self, "entry_price", None) or locals().get("entry_price", 0.0)
-                is_l = getattr(self, "is_long", True) or locals().get("is_long", True)
-                be_sl = entry_p + be_lock_pts if is_l else entry_p - be_lock_pts
-                if hasattr(om, "update_stop_loss") and be_sl > 0:
-                    om.update_stop_loss(be_sl)
-                print(f"[TRANCHE] 🏆 Tranche 1 Locked: {lots_to_close} lots closed at +{profit_pts:.1f} pts! Runner SL set to {be_sl}")
+    Live partial execution is handled inside TrailMonitor._maybe_partial_tp();
+    this helper NEVER sends orders.
+    """
     peak_profit = (mfe - entry_price) if is_long else (entry_price - mfe)
+    lock_sl = entry_price + RUNNER_BE_LOCK_PTS if is_long else entry_price - RUNNER_BE_LOCK_PTS
+    initial_sl = entry_price - MAX_SL_POINTS if is_long else entry_price + MAX_SL_POINTS
 
-    # 1. TRANCHE 1: The Cash Bank (Fixed Target + 165-pt Ratchet)
     if tranche_id == 1:
-        if profit_pts >= 360.0:
-            return (current_price, True)  # Take Profit Hit (+360 pts)
-        
-        # Breakeven Shield at +140 pts
-        if peak_profit >= 140.0:
-            be_sl = (entry_price + 25.0) if is_long else (entry_price - 25.0)
-            if peak_profit >= 400.0:
-                trail_sl = (mfe - 165.0) if is_long else (mfe + 165.0)
-                return (max(be_sl, trail_sl) if is_long else min(be_sl, trail_sl), False)
-            return (be_sl, False)
-        
-        initial_sl = (entry_price - 180.0) if is_long else (entry_price + 180.0)
-        return (initial_sl, False)
+        should_take_profit = (
+            ((current_price - entry_price) if is_long else (entry_price - current_price))
+            >= PARTIAL_TP_PTS
+        )
+        return (lock_sl if peak_profit >= PARTIAL_TP_PTS else initial_sl, should_take_profit)
 
-    # 2. TRANCHE 2: The Mega-Runner (Trails 2H 15 EMA / Wide Cushion)
     if tranche_id == 2:
-        if peak_profit >= 140.0:
-            be_sl = (entry_price + 25.0) if is_long else (entry_price - 25.0)
-            
-            # When profit exceeds +600 pts, trail the 2H 15 EMA line (absorbs 450-pt pullbacks)
-            if peak_profit >= 600.0 and htf_2h_ema > 0:
-                return (max(be_sl, htf_2h_ema) if is_long else min(be_sl, htf_2h_ema), False)
-            
-            # Fallback wide cushion (1.5x ATR ~ 380 pts)
-            cushion = max(350.0, 1.5 * atr)
-            wide_trail = (mfe - cushion) if is_long else (mfe + cushion)
-            return (max(be_sl, wide_trail) if is_long else min(be_sl, wide_trail), False)
+        if peak_profit < PARTIAL_TP_PTS:
+            return initial_sl, False
+        if peak_profit < RUNNER_WIDE_TRIGGER_PTS:
+            return lock_sl, False
+        cushion = max(RUNNER_MIN_CUSHION_PTS, atr * RUNNER_ATR_MULT)
+        wide_sl = mfe - cushion if is_long else mfe + cushion
+        return (max(lock_sl, wide_sl) if is_long else min(lock_sl, wide_sl), False)
 
-        initial_sl = (entry_price - 180.0) if is_long else (entry_price + 180.0)
-        return (initial_sl, False)
-
-    return ((entry_price - 180.0) if is_long else (entry_price + 180.0), False)
+    return initial_sl, False
