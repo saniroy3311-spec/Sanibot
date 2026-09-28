@@ -58,7 +58,7 @@ from feed.ws_feed            import CandleFeed
 from feed.binance_price_feed import BinancePriceFeed
 from feed.fills_feed         import FillsFeed
 from indicators.engine  import compute
-from strategy.signal    import evaluate, SignalType
+from strategy.signal    import evaluate, SignalType, notify_trade_exit
 from risk.calculator    import (
     RiskLevels, TrailState,
     calc_levels, recalc_levels_from_fill, calc_real_pl, calc_gross_pl,
@@ -118,7 +118,12 @@ class ShivaSniperBot:
         #     order_mgr    = self._order_mgr,
         # )
 
-        self._qty_lots = btc_to_lots(POSITION_BTC_SIZE)
+        self._qty_lots = btc_to_lots(POSITION_BTC_SIZE)   # configured size for NEW trades
+        self._active_qty_lots = 0                          # live remaining size for CURRENT trade
+        self._initial_trade_qty = 0
+        self._partial_qty = 0
+        self._partial_exit_price = 0.0
+        self._partial_realized_pl = 0.0
 
         if self._qty_lots != ALERT_QTY:
             raise RuntimeError(
@@ -231,6 +236,8 @@ class ShivaSniperBot:
             logger.warning(f"[STARTUP] Local journal state verification anomaly: {je}")
 
         if existing:
+            self._active_qty_lots = int(round(float(existing.get("contracts") or 0)))
+            self._initial_trade_qty = self._qty_lots
             logger.warning(
                 f"[STARTUP] Open position detected — will resume trail on next "
                 f"bar close. is_long={existing['is_long']} "
@@ -544,8 +551,9 @@ class ShivaSniperBot:
                         entry_bar_time_ms = original_wall_ms if original_wall_ms is not None else int(time.time() * 1000),
                         on_trail_exit     = self._on_trail_exit,
                         entry_wall_ms     = original_wall_ms,
-                        qty               = self._qty_lots,
+                        qty               = self._active_qty_lots or self._qty_lots,
                         is_recovery       = True,
+                        on_partial        = self._on_partial_fill,
                     )
                     await self._telegram.send(f"♻️ <b>Trail Resumed (Recovery)</b>\nEntry: {rebuilt.entry_price:.2f}")
             return
@@ -613,17 +621,24 @@ class ShivaSniperBot:
             _filled_contracts = (
                 float(order.get("filled") or order.get("amount") or order.get("contracts") or 0)
             )
-            if _filled_contracts > 0 and abs(_filled_contracts - self._qty_lots) > 0.01:
-                logger.info(
-                    f"[QTY-FIX] Using actual fill qty={_filled_contracts:.0f} contracts "
-                    f"(pre-computed was {self._qty_lots} lots from POSITION_BTC_SIZE)"
-                )
-                self._qty_lots = int(round(_filled_contracts))
+            if _filled_contracts > 0:
+                self._active_qty_lots = int(round(_filled_contracts))
+                if abs(_filled_contracts - self._qty_lots) > 0.01:
+                    logger.info(
+                        f"[QTY-FIX] Current trade uses actual fill qty={_filled_contracts:.0f} contracts "
+                        f"(configured new-trade size remains {self._qty_lots} lots)"
+                    )
             else:
+                self._active_qty_lots = self._qty_lots
                 logger.debug(
-                    f"[QTY-FIX] Fill qty={_filled_contracts:.0f} matches pre-computed "
-                    f"{self._qty_lots} lots — no correction needed"
+                    f"[QTY-FIX] Order response had no filled quantity; using configured "
+                    f"{self._qty_lots} lots for this trade"
                 )
+
+            self._initial_trade_qty = self._active_qty_lots
+            self._partial_qty = 0
+            self._partial_exit_price = 0.0
+            self._partial_realized_pl = 0.0
 
             # FIX-SLIP-DIRECTION (2026-07-31): the old formula measured slip in
             # the P&L-favourable direction, which is the OPPOSITE of the stop
@@ -695,7 +710,8 @@ class ShivaSniperBot:
                 signal_bar_low    = snap.low,
                 signal_bar_open   = snap.open,
                 signal_bar_close  = snap.close,
-                qty               = self._qty_lots,
+                qty               = self._active_qty_lots,
+                on_partial        = self._on_partial_fill,
             )
 
             try:
@@ -726,7 +742,7 @@ class ShivaSniperBot:
                     sl          = risk.sl,
                     tp          = risk.tp,
                     atr         = snap.atr,
-                    qty         = self._qty_lots,
+                    qty         = self._active_qty_lots,
                 )
             except Exception:
                 pass
@@ -737,7 +753,7 @@ class ShivaSniperBot:
                 sl          = risk.sl,
                 tp          = risk.tp,
                 atr         = snap.atr,
-                qty         = self._qty_lots,
+                qty         = self._active_qty_lots,
             )
 
     async def _force_close_for_reversal(self, snap) -> None:
@@ -768,7 +784,7 @@ class ShivaSniperBot:
                 is_long        = was_long,
                 reason         = "Reversal signal",
                 expected_price = snap.close,
-                qty            = self._qty_lots,
+                qty            = self._active_qty_lots or self._qty_lots,
             )
             _fill = order.get("average") or order.get("price")
             if _fill:
@@ -788,88 +804,146 @@ class ShivaSniperBot:
             position_already_closed = True,
         )
 
-    async def _on_trail_exit(self, exit_price: float, reason: str, source: str = "tick", position_already_closed: bool = False) -> None:
+    async def _on_partial_fill(
+        self,
+        closed_qty: int,
+        remaining_qty: int,
+        exit_price: float,
+        real_pl: float,
+        **_ignored,
+    ) -> None:
+        """Keep main.py's live quantity/P&L context synced after the 50% close."""
+        self._active_qty_lots = int(remaining_qty)
+        self._partial_qty = int(closed_qty)
+        self._partial_exit_price = float(exit_price)
+        self._partial_realized_pl = float(real_pl)
+        logger.info(
+            f"[PARTIAL] Main state synced | closed={closed_qty} "
+            f"remaining={remaining_qty} partial_pl={real_pl:+.6f}"
+        )
+
+    async def _on_trail_exit(
+        self,
+        exit_price: float,
+        reason: str,
+        source: str = "tick",
+        position_already_closed: bool = False,
+        exit_qty: int = None,
+        initial_qty: int = None,
+        partial_qty: int = None,
+        partial_exit_price: float = None,
+        partial_realized_pl: float = None,
+        **_ignored,
+    ) -> None:
         if not self._in_position:
             return
 
         if not position_already_closed:
             logger.warning(
-                f"[EXIT] ⚠️  _on_trail_exit called with position_already_closed=False "
-                f"— reason={reason} source={source}. "
+                f"[EXIT] _on_trail_exit called before exchange-flat confirmation "
+                f"reason={reason} source={source}"
             )
 
         risk = self._risk
+        runner_qty = int(exit_qty if exit_qty is not None else (self._active_qty_lots or self._qty_lots))
+        p_qty = int(self._partial_qty if partial_qty is None else partial_qty)
+        p_exit = float(self._partial_exit_price if partial_exit_price is None else partial_exit_price)
+        p_pl = float(self._partial_realized_pl if partial_realized_pl is None else partial_realized_pl)
+        total_qty = int(initial_qty or self._initial_trade_qty or (runner_qty + p_qty) or self._qty_lots)
+
         try:
-            pl = (calc_gross_pl(risk.entry_price, exit_price, risk.is_long, self._qty_lots) if risk else 0.0)
+            runner_pl = (
+                calc_gross_pl(risk.entry_price, exit_price, risk.is_long, runner_qty)
+                if risk and runner_qty > 0 else 0.0
+            )
+            pl = runner_pl + p_pl
         except Exception as e:
-            # A P/L calc failure must NOT block the exit notification (this is
-            # exactly what the LOT_SIZE_BTC ImportError did — killed the alert
-            # before it reached self._telegram.notify_exit). Degrade to 0.0 and
-            # keep going so the Telegram/journal path still fires.
-            logger.warning(f"[EXIT] P/L calc failed, defaulting to 0.0: {e}")
-            pl = 0.0
+            logger.warning(f"[EXIT] P/L calc failed, defaulting to stored partial P/L: {e}")
+            runner_pl = 0.0
+            pl = p_pl
+
+        # Journal stores one exit price. Use a quantity-weighted exit so its
+        # points and total P/L remain mathematically consistent with 50/50 exits.
+        legs_qty = runner_qty + p_qty
+        weighted_exit = float(exit_price)
+        if p_qty > 0 and p_exit > 0 and legs_qty > 0:
+            weighted_exit = ((p_exit * p_qty) + (float(exit_price) * runner_qty)) / legs_qty
 
         logger.info(
-            f"[EXIT] reason={reason}  source={source}  "
-            f"entry={risk.entry_price if risk else '?'}  "
-            f"exit={exit_price:.2f}  gross_pl={pl:+.6f} USD"
+            f"[EXIT] reason={reason} source={source} entry={risk.entry_price if risk else '?'} "
+            f"final_exit={exit_price:.2f} runner_qty={runner_qty} partial_qty={p_qty} "
+            f"total_pl={pl:+.6f} USD"
         )
 
         try:
             if risk:
                 self._journal.log_trade(
-                    signal_type = self._signal_type,
-                    is_long     = risk.is_long,
-                    entry_price = risk.entry_price,
-                    exit_price  = exit_price,
-                    sl          = risk.sl,
-                    tp          = risk.tp,
-                    atr         = risk.atr,
-                    qty         = self._qty_lots,
-                    real_pl     = pl,
-                    exit_reason = reason,
-                    trail_stage = self._trail_state.stage if self._trail_state else 0,
+                    signal_type=self._signal_type,
+                    is_long=risk.is_long,
+                    entry_price=risk.entry_price,
+                    exit_price=weighted_exit,
+                    sl=risk.sl,
+                    tp=risk.tp,
+                    atr=risk.atr,
+                    qty=legs_qty or total_qty,
+                    real_pl=pl,
+                    exit_reason=reason,
+                    trail_stage=self._trail_state.stage if self._trail_state else 0,
                 )
                 self._journal.close_open_trade()
         except Exception as e:
             logger.warning(f"[JOURNAL] log_trade failed: {e}")
 
-        # SHADOW-LOG (spec §6C): record the exit + realized P/L for per-trade
-        # paper-vs-backtest comparison. No-op unless SHADOW_LOG_ENABLED=true;
-        # never raises.
         try:
             from infra.shadow_logger import log_event as _shadow_log_event
             _shadow_log_event(
                 "exit",
-                entry_ts    = int(getattr(self, "_entry_ts", 0)),
-                signal_type = self._signal_type,
-                is_long     = (risk.is_long if risk else None),
-                entry_price = round(float(risk.entry_price), 2) if risk else 0.0,
-                exit_price  = round(float(exit_price), 2),
-                sl          = round(float(risk.sl), 2) if risk else 0.0,
-                tp          = round(float(risk.tp), 2) if risk else 0.0,
-                real_pl     = round(float(pl), 6),
-                exit_reason = reason,
+                entry_ts=int(getattr(self, "_entry_ts", 0)),
+                signal_type=self._signal_type,
+                is_long=(risk.is_long if risk else None),
+                entry_price=round(float(risk.entry_price), 2) if risk else 0.0,
+                exit_price=round(float(weighted_exit), 2),
+                sl=round(float(risk.sl), 2) if risk else 0.0,
+                tp=round(float(risk.tp), 2) if risk else 0.0,
+                real_pl=round(float(pl), 6),
+                exit_reason=reason,
             )
         except Exception:
             pass
 
         try:
             await self._telegram.notify_exit(
-                reason      = reason,
-                entry_price = risk.entry_price if risk else 0.0,
-                exit_price  = exit_price,
-                real_pl     = pl,
-                is_long     = risk.is_long if risk else True,
-                qty         = self._qty_lots,
+                reason=reason,
+                entry_price=risk.entry_price if risk else 0.0,
+                exit_price=exit_price,
+                real_pl=pl,
+                is_long=risk.is_long if risk else True,
+                qty=runner_qty,
+                total_qty=legs_qty or total_qty,
+                partial_qty=p_qty,
+                partial_exit_price=p_exit,
+                partial_realized_pl=p_pl,
             )
         except Exception:
             pass
 
-        self._in_position  = False
-        self._risk         = None
-        self._trail_state  = None
-        self._signal_type  = "None"
+        # Losses wait one full configured bar; winners only use the short
+        # continuation cooldown. This avoids repeat churn in chop without
+        # blocking the next genuine leg for hours.
+        try:
+            notify_trade_exit(was_loss=(pl < 0))
+        except Exception as exc:
+            logger.warning(f"[EXIT] strategy cooldown update failed: {exc}")
+
+        self._in_position = False
+        self._risk = None
+        self._trail_state = None
+        self._signal_type = "None"
+        self._active_qty_lots = 0
+        self._initial_trade_qty = 0
+        self._partial_qty = 0
+        self._partial_exit_price = 0.0
+        self._partial_realized_pl = 0.0
 
     async def _heartbeat_loop(self) -> None:
         import time
@@ -883,7 +957,7 @@ class ShivaSniperBot:
                 mins = int((uptime % 3600) // 60)
                 state_str = "LIVE 🟢" if self._state.running else "PAUSED 🔴"
                 if self._in_position:
-                    pos_str = f"{self._signal_type} ({self._qty_lots} lots)"
+                    pos_str = f"{self._signal_type} ({self._active_qty_lots or self._qty_lots} lots)"
                 else:
                     pos_str = "None"
                 msg = (
