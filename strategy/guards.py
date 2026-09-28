@@ -1,30 +1,29 @@
 """
-strategy/guards.py — Shiva Sniper Bot-v10
+strategy/guards.py — shared entry guards for Shiva Sniper.
 
-Single source of truth for the EMA-extension + wick guard used by every
-entry-evaluation path (indicators/engine.py AND strategy/trend_breakout.py).
-
-Fixed 2026-09-15: trend_breakout.py had drifted to a stale 1.8x/300pt cap
-while indicators/engine.py moved to 3.5x + wick guard, causing silent
-signal drops. This module exists so that can't happen again — tune the
-constants here ONCE and both paths pick it up automatically.
+The extension ceiling is now controlled from .env so a strong breakout can
+still be taken, while very late/FOMO entries are rejected.
 """
+from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from indicators.engine import IndicatorSnapshot
 
-MAX_EXTENSION = float("inf")  # unconstrained ceiling (wick guard still active)
-TIGHT_EXTENSION = 1.8    # below this, no wick check needed
-WICK_FRACTION = 0.25     # close must be in the outer 25% of the bar range
+MAX_EXTENSION = float(os.environ.get("EXTENSION_MAX_MULT", "2.2"))
+TIGHT_EXTENSION = float(os.environ.get("TIGHT_EXTENSION_MULT", "1.8"))
+WICK_FRACTION = float(os.environ.get("WICK_FRACTION", "0.25"))
 
 
 def passes_extension_guard(snap: "IndicatorSnapshot", is_long: bool) -> bool:
     """
-    True if price is not too extended from the 50 EMA to take a fresh
-    breakout entry. Direction-aware: for longs, a strong bar closes near
-    its high; for shorts, near its low.
+    Reject entries that are too far from the fast EMA.
+
+    Up to TIGHT_EXTENSION x ATR: accept without an extra close-location test.
+    Between TIGHT_EXTENSION and MAX_EXTENSION: require the candle to close near
+    the favourable edge of its range. Above MAX_EXTENSION: reject as too late.
     """
     extension = abs(snap.close - snap.ema_fast) / max(snap.atr, 1.0)
 
@@ -34,8 +33,10 @@ def passes_extension_guard(snap: "IndicatorSnapshot", is_long: bool) -> bool:
     if extension <= TIGHT_EXTENSION:
         return True
 
-    bar_range = snap.high - snap.low
+    bar_range = max(snap.high - snap.low, 0.0)
+    if bar_range <= 0:
+        return False
+
     if is_long:
         return snap.close >= snap.high - WICK_FRACTION * bar_range
-    else:
-        return snap.close <= snap.low + WICK_FRACTION * bar_range
+    return snap.close <= snap.low + WICK_FRACTION * bar_range
