@@ -502,6 +502,26 @@ class CandleFeed:
 
         return second
 
+    async def _fetch_closed_bar(self, exchange, symbol, want_ts, tries=8, delay=1.0):
+        """FIX-BAR-ALIGN: return the candle whose open time == want_ts, and wait
+        (up to tries*delay s) until a NEWER candle exists so it is final."""
+        found = None
+        for _ in range(tries):
+            ohlcv = await asyncio.to_thread(
+                exchange.fetch_ohlcv, symbol, CANDLE_TIMEFRAME, None, 4,
+            )
+            found = None
+            newer = False
+            for b in ohlcv or []:
+                if int(b[0]) == int(want_ts):
+                    found = b
+                elif int(b[0]) > int(want_ts):
+                    newer = True
+            if found is not None and newer:
+                return found
+            await asyncio.sleep(delay)
+        return found  # exact bar even if no newer candle yet, else None
+
     async def _process_ws_candle(self, data: dict) -> None:
         raw_ts = (
             data.get("timestamp") or
@@ -533,14 +553,24 @@ class CandleFeed:
             if not self._df.empty:
                 try:
                     if BINANCE_SIGNAL_FEED and self._binance_exchange is not None:
-                        closed_ohlcv = await asyncio.to_thread(
-                            self._binance_exchange.fetch_ohlcv,
-                            BINANCE_SYMBOL,
-                            CANDLE_TIMEFRAME,
-                            None,  
-                            3,     
+                        _exact = await self._fetch_closed_bar(
+                            self._binance_exchange, BINANCE_SYMBOL,
+                            self._last_candle_boundary,
                         )
-                        bar_idx = -2 if len(closed_ohlcv) >= 2 else -1
+                        if _exact is not None:
+                            closed_ohlcv = [_exact, _exact]   # idx -2 = exact closed bar
+                            bar_idx = -2
+                        else:
+                            logger.warning(
+                                "[FEED] FIX-BAR-ALIGN: closed Binance bar "
+                                f"ts={self._last_candle_boundary} not found - "
+                                "falling back to positional -2 (may be stale)"
+                            )
+                            closed_ohlcv = await asyncio.to_thread(
+                                self._binance_exchange.fetch_ohlcv,
+                                BINANCE_SYMBOL, CANDLE_TIMEFRAME, None, 3,
+                            )
+                            bar_idx = -2 if len(closed_ohlcv) >= 2 else -1
                         feed_name = "Binance"
                     else:
                         # FIX-DELTA-CACHE + FIX-WICK-SETTLE: Delta REST can
@@ -598,7 +628,7 @@ class CandleFeed:
                             SYMBOL, CANDLE_TIMEFRAME, None, 3,
                         )
                         if _dvol and len(_dvol) >= 2:
-                            _delta_vol = float(_dvol[-2][5])
+                            _delta_vol = float(next((b for b in _dvol if int(b[0]) == int(self._last_candle_boundary)), _dvol[-2])[5])
                             _idx = self._df.index[-1]
                             self._df.at[_idx, "volume"] = _delta_vol
                             logger.info(
