@@ -156,6 +156,9 @@ class IndicatorSnapshot:
     timestamp:    int
     # Smart-entry additions. Defaults preserve compatibility with old test/backtest
     # code that instantiates IndicatorSnapshot directly.
+    # PINE-PARITY: previous confirmed bar's EMA(5)-smoothed ADX, so the
+    # rising check can be `adx > adx[1]` instead of a stale stored value.
+    adx_prev:             float = 0.0
     htf_ema:              float = 0.0
     htf_trend_up:         bool = False
     htf_trend_down:       bool = False
@@ -385,7 +388,10 @@ def compute(df: pd.DataFrame) -> IndicatorSnapshot:
     Requires at least EMA_TREND_LEN + 10 bars (default 210).
     Called once per bar close from main.py.
     """
-    min_bars = EMA_TREND_LEN + 10
+    # PINE-PARITY: a short EMA_TREND_LEN (Setup D uses 3) must not drop the
+    # requirement below what ATR(14), DMI(14), SMA(volume,20) and the
+    # 50-bar ATR average actually need, or those come back NaN.
+    min_bars = max(EMA_TREND_LEN + 10, 120)
     if len(df) < min_bars:
         raise ValueError(f"Need >= {min_bars} bars, got {len(df)}")
 
@@ -414,7 +420,12 @@ def compute(df: pd.DataFrame) -> IndicatorSnapshot:
     dip_val      = float(plus_di_s.iloc[-1])
     dim_val      = float(minus_di_s.iloc[-1])
     adx_raw_val  = float(adx_raw_s.iloc[-1])
-    adx_smoothed = float(_ema(adx_raw_s, ADX_EMA).iloc[-1])
+    _adx_sm_s    = _ema(adx_raw_s, ADX_EMA)
+    adx_smoothed = float(_adx_sm_s.iloc[-1])
+    # PINE-PARITY: adx[1]
+    adx_prev_val = float(_adx_sm_s.iloc[-2]) if len(_adx_sm_s) >= 2 else 0.0
+    if adx_prev_val != adx_prev_val:   # NaN guard
+        adx_prev_val = 0.0
 
     vol_sma = float(df["volume"].rolling(20).mean().iloc[-1])
 
@@ -479,6 +490,7 @@ def compute(df: pd.DataFrame) -> IndicatorSnapshot:
         prev_high    = float(prev["high"]),
         prev_low     = float(prev["low"]),
         timestamp    = int(last.get("timestamp", 0)),
+        adx_prev     = adx_prev_val,
         htf_ema      = htf_ema,
         htf_trend_up = htf_up,
         htf_trend_down = htf_down,
@@ -495,7 +507,10 @@ def compute_full_series(df: pd.DataFrame) -> pd.DataFrame:
     Used by backtest / phase verification scripts.
     Returns a clean DataFrame with NaN rows dropped.
     """
-    min_bars = EMA_TREND_LEN + 10
+    # PINE-PARITY: a short EMA_TREND_LEN (Setup D uses 3) must not drop the
+    # requirement below what ATR(14), DMI(14), SMA(volume,20) and the
+    # 50-bar ATR average actually need, or those come back NaN.
+    min_bars = max(EMA_TREND_LEN + 10, 120)
     if len(df) < min_bars:
         raise ValueError(f"Need >= {min_bars} bars, got {len(df)}")
 

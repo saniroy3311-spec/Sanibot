@@ -622,3 +622,68 @@ if TRADING_MODE == "LIVE" and (PAPER_MODE or DRY_RUN):
 
 if MAX_POSITION_LOTS < 1:
     raise ValueError("MAX_POSITION_LOTS must be >= 1")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PINE-PARITY-SETUP-D
+# Appended by apply_pine_parity.py. Python evaluates top-to-bottom, so every
+# name below intentionally overrides any earlier definition in this file.
+# ══════════════════════════════════════════════════════════════════════════
+
+# Pine "ADX threshold (ADX_TREND_TH)" is a float input. config.py previously
+# did int(float(...)), so 13.5 silently became 13. Keep it a float.
+ADX_TREND_TH = float(os.environ.get("ADX_TREND_TH", "13"))
+
+# Pine "ADX rising check" dropdown:
+#   correct -> adx > adx[1]      (previous CONFIRMED bar)   <-- Setup D
+#   bot     -> legacy stale-value comparison
+#   off     -> no rising requirement
+ADX_RISING_MODE = os.environ.get("ADX_RISING_MODE", "correct").strip().lower()
+if ADX_RISING_MODE not in {"correct", "bot", "off"}:
+    raise ValueError(f"ADX_RISING_MODE must be correct|bot|off, got {ADX_RISING_MODE!r}")
+
+# Pine "Pullback entries (EMA15 rejection)" checkbox.
+USE_PULLBACK_ENTRIES = os.environ.get("USE_PULLBACK_ENTRIES", "true").lower() == "true"
+# Pine hard-codes 0.35 in `nearEma`; exposed here for tuning.
+PULLBACK_NEAR_EMA_ATR_MULT = float(os.environ.get("PULLBACK_NEAR_EMA_ATR_MULT", "0.35"))
+
+# Extension guard — all three Pine inputs, now genuinely .env-driven.
+EXTENSION_MAX_MULT      = float(os.environ.get("EXTENSION_MAX_MULT",      "2.1"))
+EXTENSION_TIGHT_MULT    = float(os.environ.get("EXTENSION_TIGHT_MULT",    "1.8"))
+EXTENSION_WICK_FRACTION = float(os.environ.get("EXTENSION_WICK_FRACTION", "0.25"))
+
+# ── EXIT MODE ─────────────────────────────────────────────────────────────
+# Pine "Exit mode" dropdown:
+#   live_bot    -> 50% partial at +PARTIAL_TP_PTS, then runner
+#   more_points -> no partial; a single trailing stop that arms at
+#                  +TRAIL_START_PTS of MFE and trails
+#                  max(TRAIL_MIN_CUSHION_PTS, ATR*TRAIL_CUSHION_ATR_MULT)
+#                  behind the best price, with a floor at entry.
+EXIT_MODE = os.environ.get("EXIT_MODE", "more_points").strip().lower()
+if EXIT_MODE not in {"live_bot", "more_points"}:
+    raise ValueError(f"EXIT_MODE must be live_bot|more_points, got {EXIT_MODE!r}")
+
+TRAIL_START_PTS          = float(os.environ.get("TRAIL_START_PTS",          "70"))
+TRAIL_MIN_CUSHION_PTS    = float(os.environ.get("TRAIL_MIN_CUSHION_PTS",    "70"))
+TRAIL_CUSHION_ATR_MULT   = float(os.environ.get("TRAIL_CUSHION_ATR_MULT",   "0.01"))
+TRAIL_MODE_BE_ENABLED    = os.environ.get("TRAIL_MODE_BE_ENABLED", "false").lower() == "true"
+
+if EXIT_MODE == "more_points":
+    # The "more points" profile is implemented by reusing the existing runner
+    # engine with a zero-size partial: the trade flips to runner mode at
+    # +TRAIL_START_PTS without closing any lots. This keeps ONE tested exit
+    # code path instead of introducing a second one.
+    PARTIAL_TP_ENABLED      = True
+    PARTIAL_TP_PTS          = TRAIL_START_PTS      # Pine trail_price offset
+    PARTIAL_TP_RATIO        = 0.0                  # 0 => arm only, close nothing
+    PRE_PARTIAL_TRAIL_ENABLED = False
+    RUNNER_BE_LOCK_PTS      = float(os.environ.get("RUNNER_BE_LOCK_PTS", "0"))
+    RUNNER_WIDE_TRIGGER_PTS = TRAIL_START_PTS      # trail live from the arm point
+    RUNNER_MIN_CUSHION_PTS  = TRAIL_MIN_CUSHION_PTS
+    RUNNER_ATR_MULT         = TRAIL_CUSHION_ATR_MULT
+    PRE_TRAIL_BE_ENABLED    = TRAIL_MODE_BE_ENABLED
+else:
+    PRE_TRAIL_BE_ENABLED    = os.environ.get("PRE_TRAIL_BE_ENABLED", "true").lower() == "true"
+
+# Arm-only flag consumed by monitor/trail_loop.py.
+PARTIAL_ARM_ONLY = PARTIAL_TP_ENABLED and PARTIAL_TP_RATIO <= 0.0

@@ -141,6 +141,7 @@ from config import (
     MAX_EXIT_SLIPPAGE_ATR_PCT,
     PARTIAL_TP_ENABLED, PARTIAL_TP_PTS, PARTIAL_TP_RATIO,
     PRE_PARTIAL_TRAIL_ENABLED, RUNNER_BE_LOCK_PTS,
+    PARTIAL_ARM_ONLY, PRE_TRAIL_BE_ENABLED, EXIT_MODE,
     RUNNER_WIDE_TRIGGER_PTS, RUNNER_MIN_CUSHION_PTS, RUNNER_ATR_MULT,
     LOT_SIZE_BTC,
 )
@@ -771,8 +772,66 @@ class TrailMonitor:
         self._trail_ever_armed = True
         self._apply_trail_sl(state, risk, new_sl, risk.is_long, source=source)
 
+    def _arm_trail_only(self, price: float, source: str = "tick") -> bool:
+        """
+        PINE-PARITY (Exit mode = "More points: trail from +200").
+
+        Flip the trade into runner/trailing mode once MFE reaches
+        +PARTIAL_TP_PTS, WITHOUT closing any lots. Mirrors Pine:
+            if mfe >= trailStart
+                runner := true
+            mStop = runner ? fillPx : stopLvl
+            strategy.exit("B", stop=mStop,
+                          trail_price=fillPx + dir*trailStart,
+                          trail_offset=max(mMinCush, atr*mCushAtr))
+
+        Returns True on the bar/tick that arms it.
+        """
+        risk = self._risk
+        state = self._state
+        if risk is None or state is None or self._partial_done or self._qty <= 0:
+            return False
+
+        profit_pts = (price - risk.entry_price) if risk.is_long else (risk.entry_price - price)
+        if profit_pts < PARTIAL_TP_PTS:
+            return False
+
+        self._partial_done = True          # "tranche stage reached"
+        self._runner_mode  = True
+        self._partial_closed_qty = 0
+        self._partial_exit_price = 0.0
+        self._partial_realized_pl = 0.0
+
+        state.trail_armed = True
+        state.be_done     = True           # floor is now managed by the trail
+        state.stage       = max(int(getattr(state, "stage", 0)), 1)
+        state.best_price  = float(price)
+        state.current_sl  = self._runner_lock_price()
+        self._trail_ever_armed = True
+
+        logger.info(
+            f"[TRAIL-ARM] Pine trail armed (arm-only, 0 lots closed) | "
+            f"src={source} price={price:.2f} mfe={profit_pts:.1f}pts "
+            f"trigger=+{PARTIAL_TP_PTS:.0f} floor={state.current_sl:.2f} "
+            f"cushion={max(RUNNER_MIN_CUSHION_PTS, self._current_atr * RUNNER_ATR_MULT):.1f}pts"
+        )
+
+        # Re-run the runner SL maths straight away so the trailing stop is
+        # live from this very tick rather than one loop later.
+        self._update_runner_sl(price, update_best=False, source="arm_only")
+        return True
+
     async def _maybe_partial_tp(self, price: float, source: str) -> bool:
         """Close the configured first tranche once +PARTIAL_TP_PTS is reached."""
+        # PINE-PARITY: arm-only mode ("More points: trail from +200").
+        # PARTIAL_TP_RATIO=0 means "flip to runner/trailing mode at
+        # +PARTIAL_TP_PTS but do not close any lots". No order is sent,
+        # so the qty>1 and delta-only guards below do not apply: the
+        # trigger may legitimately come from a bar extreme too, which is
+        # how Pine measures MFE (mfe := max(mfe, dir*(fav - fillPx))).
+        if PARTIAL_ARM_ONLY:
+            return self._arm_trail_only(price, source=source)
+
         if (
             not PARTIAL_TP_ENABLED
             or self._partial_done
@@ -902,7 +961,9 @@ class TrailMonitor:
             # Before +350: keep initial/BE protection but do not squeeze the
             # position with the legacy tight Stage-1 trail.
             profit = (price - entry_price) if is_long else (entry_price - price)
-            if not state.be_done and profit > atr * BE_MULT:
+            # PINE-PARITY: Pine's "More points" mode has mBeOn=false, so no
+            # breakeven before the trail arms.
+            if PRE_TRAIL_BE_ENABLED and not state.be_done and profit > atr * BE_MULT:
                 self._activate_be(state, risk, is_long, atr, source="tick")
 
             sl_level = state.current_sl + TRAIL_SL_PRE_FIRE_BUFFER if is_long else state.current_sl - TRAIL_SL_PRE_FIRE_BUFFER
@@ -1006,7 +1067,12 @@ class TrailMonitor:
         # ── SMART 50/50 MODE: bypass the legacy pre-partial tight trail ─────
         if PARTIAL_TP_ENABLED and (self._partial_done or not PRE_PARTIAL_TRAIL_ENABLED):
             dual_profit = (bar_close - risk.entry_price) if is_long else (risk.entry_price - bar_close)
-            if not self._partial_done and not state.be_done and dual_profit > atr * BE_MULT:
+            if (
+                PRE_TRAIL_BE_ENABLED
+                and not self._partial_done
+                and not state.be_done
+                and dual_profit > atr * BE_MULT
+            ):
                 self._activate_be(state, risk, is_long, atr, source="bar_close")
 
             # IMPORTANT: evaluate this bar against the stop that was already
@@ -1045,6 +1111,12 @@ class TrailMonitor:
             # favorable bar extreme for the NEXT tick/bar; do not look backward
             # and apply the newly-tightened stop to earlier prices in this bar.
             bar_extreme = bar_high if is_long else bar_low
+            # PINE-PARITY: Pine arms the trail from the bar EXTREME
+            # (mfe uses high/low), not only from live ticks. Without this a
+            # fast bar that spikes past the trigger and closes back below it
+            # would never arm, and the move would be given back.
+            if PARTIAL_ARM_ONLY and not self._partial_done:
+                self._arm_trail_only(bar_extreme, source="bar_close")
             if self._partial_done and self._runner_mode:
                 self._update_runner_sl(bar_extreme, update_best=True, source="runner_bar")
             return
