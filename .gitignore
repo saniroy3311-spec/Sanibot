@@ -53,3 +53,4 @@ install_update.py
 venv/
 *.db
 __pycache__/
+*.prepine
