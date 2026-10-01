@@ -54,3 +54,6 @@ venv/
 *.db
 __pycache__/
 *.prepine
+*.prealign
+*.prepine
+*.preghost
