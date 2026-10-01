@@ -144,6 +144,7 @@ from config import (
     PARTIAL_ARM_ONLY, PRE_TRAIL_BE_ENABLED, EXIT_MODE,
     RUNNER_WIDE_TRIGGER_PTS, RUNNER_MIN_CUSHION_PTS, RUNNER_ATR_MULT,
     LOT_SIZE_BTC,
+    PAPER_MODE, DRY_RUN,
 )
 from risk.calculator import RiskLevels, TrailState
 
@@ -535,6 +536,8 @@ class TrailMonitor:
         # At TRAIL_LOOP_SEC=5 and POSITION_POLL_TICKS=1 this checks every 5 seconds
         # (max ghost exposure = 5 s instead of 27 minutes from today's incident).
         self._pos_poll_ticks   : int = 0
+        self._pos_seen_live    : bool = False
+        self._pos_flat_streak  : int = 0
         POSITION_POLL_TICKS    = 1   # check every tick-loop iteration (5s)
 
         # 50/50 partial-profit + runner state.
@@ -643,6 +646,8 @@ class TrailMonitor:
 
         # FIX-10: Reset position poll counter for the new trade
         self._pos_poll_ticks = 0
+        self._pos_seen_live = False
+        self._pos_flat_streak = 0
 
         self._entry_bar_end_ms = ( 
             (entry_bar_time_ms // BAR_PERIOD_MS) * BAR_PERIOD_MS
@@ -1646,11 +1651,22 @@ class TrailMonitor:
                 # If Delta says flat, the bracket SL fired while Python was
                 # unaware — stop the ghost trail and recover the exit.
                 self._pos_poll_ticks += 1
-                if self._risk is not None and self._pos_poll_ticks  >= POSITION_POLL_TICKS:
+                if (not PAPER_MODE and not DRY_RUN
+                        and self._risk is not None
+                        and self._pos_poll_ticks >= POSITION_POLL_TICKS):
                     self._pos_poll_ticks = 0
                     try:
                         pos = await self._order_mgr.fetch_open_position()
-                        if pos is None:
+                        if pos is not None:
+                            self._pos_seen_live = True
+                            self._pos_flat_streak = 0
+                        else:
+                            self._pos_flat_streak += 1
+                        if pos is None and not self._pos_seen_live:
+                            logger.info('[TRAIL] FIX-10b: fill not visible yet - holding')
+                        elif pos is None and self._pos_flat_streak < 2:
+                            logger.warning('[TRAIL] FIX-10b: flat poll 1/2 - confirming')
+                        elif pos is None:
                             logger.warning(
                                 "[TRAIL] FIX-10: Position no longer exists on Delta —  "
                                 "bracket SL fired silently. Stopping ghost trail."

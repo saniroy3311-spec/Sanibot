@@ -1064,6 +1064,8 @@ class OrderManager:
 
     async def fetch_bracket_fill_price(self):
         """Return fill price of the most recent trade on SYMBOL."""
+        if PAPER_MODE or DRY_RUN:
+            return None
         try:
             trades = await _retry(lambda: self.exchange.fetch_my_trades(SYMBOL, limit=5))
             if not trades:
