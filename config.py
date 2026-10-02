@@ -663,7 +663,7 @@ EXIT_MODE = os.environ.get("EXIT_MODE", "more_points").strip().lower()
 if EXIT_MODE not in {"live_bot", "more_points"}:
     raise ValueError(f"EXIT_MODE must be live_bot|more_points, got {EXIT_MODE!r}")
 
-TRAIL_START_PTS          = float(os.environ.get("TRAIL_START_PTS",          "70"))
+TRAIL_START_PTS          = float(os.environ.get("TRAIL_START_PTS",          "20"))
 TRAIL_MIN_CUSHION_PTS    = float(os.environ.get("TRAIL_MIN_CUSHION_PTS",    "70"))
 TRAIL_CUSHION_ATR_MULT   = float(os.environ.get("TRAIL_CUSHION_ATR_MULT",   "0.01"))
 TRAIL_MODE_BE_ENABLED    = os.environ.get("TRAIL_MODE_BE_ENABLED", "false").lower() == "true"
