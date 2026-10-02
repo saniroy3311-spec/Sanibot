@@ -137,6 +137,10 @@ class CandleFeed:
         if not self._ready_fired:
             self._ready_fired = True
             await self.on_feed_ready()
+            # DELTA-TRADES-POD-FIX: start the separate public-socket trades feed once
+            if not getattr(self, "_trades_task_started", False) and not DELTA_TESTNET:
+                self._trades_task_started = True
+                self._trades_task = asyncio.get_running_loop().create_task(self._run_trades_ws_forever())
 
         while True:
             if self._ws_failures < _MAX_WS_FAILURES:
@@ -174,6 +178,60 @@ class CandleFeed:
                     )
                     self._ws_failures     = 0
                     self._rest_poll_count = 0
+
+    async def _run_trades_ws_forever(self) -> None:
+        """DELTA-TRADES-POD-FIX: Delta India serves the public "trades" channel only
+        on public-socket (socket.india answers "Use appropriate pod"). Separate
+        connection; candles and ticker stay on the main socket unchanged."""
+        url = "wss://public-socket.india.delta.exchange"
+        ws_symbol = _ccxt_to_ws_symbol(SYMBOL)
+        sub = json.dumps({"type": "subscribe", "payload": {"channels": [
+            {"name": "trades", "symbols": [ws_symbol]}]}})
+        while True:
+            try:
+                async with websockets.connect(url, ping_interval=20, ping_timeout=10, close_timeout=10) as ws:
+                    await ws.send(sub)
+                    logger.info(f"[FEED] Trades WebSocket connected \u2192 {url} | channel=trades symbol={ws_symbol}")
+                    async for raw in ws:
+                        try:
+                            msg = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+                        mtype = msg.get("type", "")
+                        if mtype == "subscriptions":
+                            for ch in msg.get("channels") or []:
+                                if ch.get("error"):
+                                    logger.warning(f"[FEED] Trades subscription rejected: {ch}")
+                            continue
+                        if mtype != "trades":
+                            continue
+                        try:
+                            trade_px = float(msg.get("p") or msg.get("price") or 0)
+                            trade_t = float(msg.get("t") or msg.get("timestamp") or 0)
+                        except (TypeError, ValueError):
+                            continue
+                        if trade_px <= 0 or trade_t <= 0:
+                            continue
+                        ts_s = trade_t / 1e6 if trade_t > 1e14 else (trade_t / 1e3 if trade_t > 1e11 else trade_t)
+                        if time.time() - ts_s > 10.0 or trade_t < getattr(self, "_last_trade_t", 0.0):
+                            continue  # replayed / old / out-of-order trade
+                        self._last_trade_t = trade_t
+                        if not getattr(self, "_trades_logged", False):
+                            logger.info(f"[FEED] Delta trades stream active \u2705 first trade price={trade_px:.2f}")
+                            self._trades_logged = True
+                        self._last_delta_tick = trade_px
+                        if self.trail_monitor is not None:
+                            self.trail_monitor._feed_trade_px = trade_px
+                            self.trail_monitor._feed_trade_wall_s = time.time()
+                            try:
+                                await self.trail_monitor.push_delta_tick(trade_px)
+                            except Exception as e:
+                                logger.error(f"[FEED] push_delta_tick failed: {e}", exc_info=True)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(f"[FEED] Trades WebSocket error: {e} \u2014 reconnecting in 5s")
+            await asyncio.sleep(5)
 
     async def _load_history(self) -> None:
         base_url = _INDIA_TESTNET if DELTA_TESTNET else _INDIA_LIVE
@@ -378,7 +436,8 @@ class CandleFeed:
                 "channels": [
                     {"name": channel,    "symbols": [ws_symbol]},
                     {"name": "v2/ticker", "symbols": [ws_symbol]},
-                    {"name": "trades", "symbols": [ws_symbol]},
+                    # DELTA-TRADES-POD-FIX: "trades" is forbidden on this socket;
+                    # it runs on public-socket instead (see _run_trades_ws_forever).
                 ]
             }
         })
@@ -386,7 +445,7 @@ class CandleFeed:
 
         logger.info(
             f"WebSocket connecting → {ws_url} | "
-            f"channels={channel},v2/ticker,trades symbol={ws_symbol}"
+            f"channels={channel},v2/ticker symbol={ws_symbol} (+trades via public-socket)"
         )
 
         async with websockets.connect(
