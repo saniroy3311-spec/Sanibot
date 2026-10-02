@@ -378,6 +378,7 @@ class CandleFeed:
                 "channels": [
                     {"name": channel,    "symbols": [ws_symbol]},
                     {"name": "v2/ticker", "symbols": [ws_symbol]},
+                    {"name": "trades", "symbols": [ws_symbol]},
                 ]
             }
         })
@@ -385,7 +386,7 @@ class CandleFeed:
 
         logger.info(
             f"WebSocket connecting → {ws_url} | "
-            f"channels={channel},v2/ticker symbol={ws_symbol}"
+            f"channels={channel},v2/ticker,trades symbol={ws_symbol}"
         )
 
         async with websockets.connect(
@@ -415,9 +416,35 @@ class CandleFeed:
 
                 self._msg_count += 1
                 if self._msg_count <= 10 and msg_type not in (
-                    channel, "v2/ticker", "subscriptions", "heartbeat"
+                    channel, "v2/ticker", "trades", "subscriptions", "heartbeat"
                 ):
                     logger.debug(f"WS msg #{self._msg_count} type={msg_type!r}")
+
+                if msg_type == "trades":
+                    # DELTA-TRADES-FIX: every real Delta trade (Delta India channel "trades").
+                    try:
+                        trade_px = float(msg.get("p") or msg.get("price") or 0)
+                        trade_t = float(msg.get("t") or msg.get("timestamp") or 0)
+                    except (TypeError, ValueError):
+                        trade_px, trade_t = 0.0, 0.0
+                    if trade_px > 0 and trade_t > 0:
+                        ts_s = trade_t / 1e6 if trade_t > 1e14 else (trade_t / 1e3 if trade_t > 1e11 else trade_t)
+                        if time.time() - ts_s > 10.0 or trade_t < getattr(self, "_last_trade_t", 0.0):
+                            trade_px = 0.0  # replayed / old / out-of-order trade -> ignore
+                        else:
+                            self._last_trade_t = trade_t
+                    else:
+                        trade_px = 0.0
+                    if trade_px > 0:
+                        if not getattr(self, "_trades_logged", False):
+                            logger.info(f"[FEED] Delta trades stream active \u2705 first trade price={trade_px:.2f}")
+                            self._trades_logged = True
+                        self._last_delta_tick = trade_px
+                        if self.trail_monitor is not None:
+                            self.trail_monitor._feed_trade_px = trade_px
+                            self.trail_monitor._feed_trade_wall_s = time.time()
+                            await self.trail_monitor.push_delta_tick(trade_px)
+                    continue
 
                 if msg_type == "v2/ticker":
                     data = msg.get("data") or msg
@@ -427,7 +454,10 @@ class CandleFeed:
                         # two different prices into one tick stream.
                         delta_price = self._extract_tick_price(data)
                         self._log_field_divergence(data)
-                        if delta_price is not None and self.trail_monitor is not None:
+                        # DELTA-TRADES-FIX: 5 s ticker is only a fallback when no trade for 3 s
+                        if delta_price is not None and self.trail_monitor is not None and (
+                            time.time() - getattr(self.trail_monitor, "_feed_trade_wall_s", 0.0) >= 3.0
+                        ):
                             self._last_delta_tick = delta_price
                             loop = asyncio.get_running_loop()
                             loop.create_task(

@@ -1325,6 +1325,13 @@ class TrailMonitor:
         """
         now_s = time.time()
 
+        # DELTA-TRADES-FIX: a real Delta trade from the last 1 s is the only
+        # truly contemporaneous reference for the Binance->Delta offset.
+        _ft_px = getattr(self, "_feed_trade_px", None)
+        _ft_age = now_s - getattr(self, "_feed_trade_wall_s", 0.0)
+        if _ft_px and _ft_age <= 1.0:
+            return float(_ft_px), f"delta_trade({_ft_age:.2f}s)"
+
         if self._last_delta_price is not None and self._last_delta_price > 0:
             age_s = now_s - self._last_delta_accept_wall_s
             if age_s <= OFFSET_REF_MAX_AGE_S:
@@ -1804,6 +1811,9 @@ class TrailMonitor:
                         logger.warning(f"[TRAIL] FIX-10: Position poll failed (keeping trail): {poll_err}")
                 # ── END POSITION GUARD ────────────────────────────────────────
 
+                # DELTA-TRADES-FIX: skip the 5 s REST ticker while Delta trades are fresh
+                if time.time() - getattr(self, "_feed_trade_wall_s", 0.0) < 3.0:
+                    continue
                 price = await self._get_mark_price()
                 if price is None or price  <= 0:
                     continue
