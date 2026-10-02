@@ -749,8 +749,35 @@ class TrailMonitor:
         entry = float(self._risk.entry_price)
         return (best - entry) if self._risk.is_long else (entry - best)
 
+    def _entry_bar_is_live(self) -> bool:
+        """True while the fill candle is still forming."""
+        return (
+            self._entry_bar_end_ms > 0
+            and int(time.time() * 1000) < self._entry_bar_end_ms
+        )
+
+    def _arm_anchor_price(self) -> tuple[float, str]:
+        """
+        Pine parity for the arm-only / More-points mode.
+
+        On the SIGNAL bar Pine submits the native trailing order before the
+        market entry fills, so the entry-candle activation level is based on
+        signal_close +/− TRAIL_START_PTS. After that candle closes Pine's
+        strategy body knows fillPx and reissues the order from fillPx.
+        """
+        risk = self._risk
+        if risk is None:
+            return 0.0, "none"
+
+        if PARTIAL_ARM_ONLY and self._entry_bar_is_live():
+            signal_close = float(getattr(risk, "signal_close", 0.0) or 0.0)
+            if signal_close > 0:
+                return signal_close, "signal_close"
+
+        return float(risk.entry_price), "fill"
+
     def _update_runner_sl(self, price: float, update_best: bool = True, source: str = "runner") -> None:
-        """Keep a +50pt floor, then use a wide ATR trail after +600pt MFE."""
+        """Update the More-points/runner stop with Pine entry-candle parity."""
         risk = self._risk
         state = self._state
         if risk is None or state is None or not self._runner_mode:
@@ -759,12 +786,59 @@ class TrailMonitor:
         if update_best:
             self._update_best_price(state, price, risk.is_long)
 
+        cushion = max(RUNNER_MIN_CUSHION_PTS, self._current_atr * RUNNER_ATR_MULT)
+
+        # PINE-ENTRY-TRAIL-PARITY (2026-10-02): on the entry candle the
+        # original strategy.exit() contains ONLY trail_price/trail_offset.
+        # The fill-price floor (mStop = fillPx) is not submitted until Pine
+        # executes again at the entry candle close. This matters when
+        # TRAIL_START_PTS < cushion (20 < 70): forcing a BE floor immediately
+        # would make the bot exit much earlier than TradingView.
+        if PARTIAL_ARM_ONLY and self._entry_bar_is_live():
+            if state.best_price <= 0:
+                return
+            native_sl = (
+                state.best_price - cushion
+                if risk.is_long
+                else state.best_price + cushion
+            )
+            state.trail_armed = True
+            state.be_done = False
+            self._trail_ever_armed = True
+
+            # At the exact arm tick Pine had no initial/BE stop on the entry
+            # candle, only the native trailing order. Therefore replace the
+            # informational pre-arm SL with the native trail level once, even
+            # if that level is looser. After arming, ratchet only in the
+            # favourable direction.
+            if source == "arm_only":
+                if abs(native_sl - state.current_sl) > 0.01:
+                    logger.info(
+                        f"[TRAIL] SL: {state.current_sl:.2f}→{native_sl:.2f}  "
+                        f"(entry-candle native trail ARM best={state.best_price:.2f})"
+                    )
+                state.current_sl = native_sl
+            elif risk.is_long and native_sl > state.current_sl:
+                logger.info(
+                    f"[TRAIL] SL: {state.current_sl:.2f}→{native_sl:.2f}  "
+                    f"(entry-candle native trail best={state.best_price:.2f} src={source})"
+                )
+                state.current_sl = native_sl
+            elif (not risk.is_long) and native_sl < state.current_sl:
+                logger.info(
+                    f"[TRAIL] SL: {state.current_sl:.2f}→{native_sl:.2f}  "
+                    f"(entry-candle native trail best={state.best_price:.2f} src={source})"
+                )
+                state.current_sl = native_sl
+            return
+
+        # From the next candle onward Pine submits mStop=fillPx once runner is
+        # active, so the bot now promotes the protection to the same fill floor.
         lock_sl = self._runner_lock_price()
         new_sl = lock_sl
         peak_profit = self._runner_peak_profit()
 
         if peak_profit >= RUNNER_WIDE_TRIGGER_PTS and state.best_price > 0:
-            cushion = max(RUNNER_MIN_CUSHION_PTS, self._current_atr * RUNNER_ATR_MULT)
             wide_sl = (
                 state.best_price - cushion
                 if risk.is_long
@@ -779,27 +853,25 @@ class TrailMonitor:
 
     def _arm_trail_only(self, price: float, source: str = "tick") -> bool:
         """
-        PINE-PARITY (Exit mode = "More points: trail from +200").
+        Pine-parity arm-only trail for Exit mode = "More points".
 
-        Flip the trade into runner/trailing mode once MFE reaches
-        +PARTIAL_TP_PTS, WITHOUT closing any lots. Mirrors Pine:
-            if mfe >= trailStart
-                runner := true
-            mStop = runner ? fillPx : stopLvl
-            strategy.exit("B", stop=mStop,
-                          trail_price=fillPx + dir*trailStart,
-                          trail_offset=max(mMinCush, atr*mCushAtr))
+        Entry candle: activation is measured from signal_close, because Pine
+        submitted the trailing order on the signal bar before the market fill.
+        Later candles: activation is measured from the actual fill price.
 
-        Returns True on the bar/tick that arms it.
+        No lots are closed when the trail arms.
         """
         risk = self._risk
         state = self._state
         if risk is None or state is None or self._partial_done or self._qty <= 0:
             return False
 
-        profit_pts = (price - risk.entry_price) if risk.is_long else (risk.entry_price - price)
+        arm_anchor, anchor_src = self._arm_anchor_price()
+        profit_pts = (price - arm_anchor) if risk.is_long else (arm_anchor - price)
         if profit_pts < PARTIAL_TP_PTS:
             return False
+
+        entry_bar_live = PARTIAL_ARM_ONLY and self._entry_bar_is_live()
 
         self._partial_done = True          # "tranche stage reached"
         self._runner_mode  = True
@@ -808,22 +880,25 @@ class TrailMonitor:
         self._partial_realized_pl = 0.0
 
         state.trail_armed = True
-        state.be_done     = True           # floor is now managed by the trail
+        # No fill-price floor on the entry candle; Pine adds that floor only
+        # when its strategy body runs at the entry candle close.
+        state.be_done     = not entry_bar_live
         state.stage       = max(int(getattr(state, "stage", 0)), 1)
         state.best_price  = float(price)
-        state.current_sl  = self._runner_lock_price()
         self._trail_ever_armed = True
 
+        # Re-run the runner SL maths immediately so the native trailing stop is
+        # live on the same tick that crosses the activation price.
+        self._update_runner_sl(price, update_best=False, source="arm_only")
+
+        cushion = max(RUNNER_MIN_CUSHION_PTS, self._current_atr * RUNNER_ATR_MULT)
+        floor_note = "native-no-floor" if entry_bar_live else f"fill-floor={self._runner_lock_price():.2f}"
         logger.info(
             f"[TRAIL-ARM] Pine trail armed (arm-only, 0 lots closed) | "
-            f"src={source} price={price:.2f} mfe={profit_pts:.1f}pts "
-            f"trigger=+{PARTIAL_TP_PTS:.0f} floor={state.current_sl:.2f} "
-            f"cushion={max(RUNNER_MIN_CUSHION_PTS, self._current_atr * RUNNER_ATR_MULT):.1f}pts"
+            f"src={source} price={price:.2f} arm_anchor={arm_anchor:.2f}({anchor_src}) "
+            f"move={profit_pts:.1f}pts trigger=+{PARTIAL_TP_PTS:.0f} "
+            f"trail_sl={state.current_sl:.2f} {floor_note} cushion={cushion:.1f}pts"
         )
-
-        # Re-run the runner SL maths straight away so the trailing stop is
-        # live from this very tick rather than one loop later.
-        self._update_runner_sl(price, update_best=False, source="arm_only")
         return True
 
     async def _maybe_partial_tp(self, price: float, source: str) -> bool:
