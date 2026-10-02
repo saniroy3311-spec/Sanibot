@@ -186,7 +186,7 @@ OFFSET_STALE_TIMEOUT_S       = 60.0   # force-accept next candidate after this l
 # arrived). Delta's own order book occasionally prints a single outlier tick
 # (thin liquidity flash) that is not present on Binance/TV's data source.
 # CHANGED FROM 20.0 TO 30.0 TO REDUCE FALSE POSITIVES ON FAST MOVES.
-MAX_DELTA_TICK_JUMP = 30.0
+MAX_DELTA_TICK_JUMP = float(os.environ.get("MAX_DELTA_TICK_JUMP", "30.0"))  # WICK-ENV
 
 # FIX-14: Recovery valves for FIX-13. The plain version of FIX-13 compares
 # every tick to the LAST ACCEPTED tick. If one tick is ever wrongly rejected,
@@ -205,8 +205,8 @@ MAX_DELTA_TICK_JUMP = 30.0
 # 2) STALE TIMEOUT: if no tick has been accepted for this many seconds,
 #    the next tick is accepted unconditionally — covers feed gaps /
 #    reconnects where price legitimately moved while we weren't listening.
-WICK_STREAK_CONFIRM   = 5      # consecutive same-direction rejects before override
-WICK_STALE_TIMEOUT_S  = 5.0    # force-accept next tick after this long with none accepted
+WICK_STREAK_CONFIRM   = int(os.environ.get("WICK_STREAK_CONFIRM", "5"))  # WICK-ENV
+WICK_STALE_TIMEOUT_S  = float(os.environ.get("WICK_STALE_TIMEOUT_S", "5.0"))  # WICK-ENV
 
 # FIX-15: Trail SL breach hold guard.
 # Once tick-count confirmation fires (TRAIL_SL_CONFIRM_TICKS met), do NOT
@@ -1506,7 +1506,7 @@ class TrailMonitor:
         if eval_price is None:
             return
 
-        logger.info(f"[TRAIL] HEARTBEAT push_delta_tick eval_price={eval_price:.2f}")
+        logger.debug(f"[TRAIL] HEARTBEAT push_delta_tick eval_price={eval_price:.2f}")
         await self._evaluate_tick(eval_price, source="delta")
 
     async def _recalibrate_offset(self, binance_price_raw: float) -> None:
@@ -1779,7 +1779,7 @@ class TrailMonitor:
         """
         risk  = self._risk
         state = self._state
-        logger.info(f"[TRAIL] HEARTBEAT _evaluate_tick called | risk_is_none={risk is None} state_is_none={state is None}")
+        logger.debug(f"[TRAIL] HEARTBEAT _evaluate_tick called | risk_is_none={risk is None} state_is_none={state is None}")
         if risk is None or state is None:
             return
 

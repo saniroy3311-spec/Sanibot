@@ -571,12 +571,35 @@ class ShivaSniperBot:
             return
 
         # NEW GUARD LOGIC: Ignore signals printed on the startup bar payload
+        # BOOT-ENTRY-AGE: ...unless that bar closed only moments ago, in which
+        # case this is a genuine live signal that Pine is acting on right now
+        # and skipping it forfeits the trade. Age is measured from the close of
+        # the signal bar; beyond the limit the price has moved too far from the
+        # bar close for a late market entry to resemble Pine's next-bar-open
+        # fill, so the original skip still applies.
         if is_historical_boot:
-            logger.info(
-                f"[STARTUP GUARD] Strategy math detected {sig.signal_type.value} on the downloaded history. "
-                f"Ignoring past signal to ensure Pine Parity. Bot will only enter on new live candles."
+            _boot_max_age = float(os.environ.get("BOOT_ENTRY_MAX_AGE_SEC", "120"))
+            try:
+                _u   = CANDLE_TIMEFRAME[-1]
+                _n   = int(CANDLE_TIMEFRAME[:-1])
+                _pms = _n * {"m": 60_000, "h": 3_600_000, "d": 86_400_000}.get(_u, 60_000)
+                _bar_age_s = time.time() - (int(snap.timestamp) + _pms) / 1000.0
+            except Exception:
+                _bar_age_s = 1e9
+
+            if _bar_age_s > _boot_max_age or _bar_age_s < 0:
+                logger.info(
+                    f"[STARTUP GUARD] Strategy math detected {sig.signal_type.value} on the downloaded history. "
+                    f"Signal bar closed {_bar_age_s:.0f}s ago (limit {_boot_max_age:.0f}s) — "
+                    f"too late for a Pine-comparable fill. Ignoring past signal."
+                )
+                return
+
+            logger.warning(
+                f"[STARTUP GUARD] BOOT-ENTRY-AGE: {sig.signal_type.value} on the boot bar, "
+                f"but it closed only {_bar_age_s:.0f}s ago (limit {_boot_max_age:.0f}s) — "
+                f"treating as live and allowing entry. Fill may differ slightly from Pine."
             )
-            return
 
         if not self._state.running:
             logger.info(f"[SIGNAL] {sig.signal_type.value} ignored — engine PAUSED via /stop_bot")
