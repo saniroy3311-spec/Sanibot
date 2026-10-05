@@ -687,3 +687,14 @@ else:
 
 # Arm-only flag consumed by monitor/trail_loop.py.
 PARTIAL_ARM_ONLY = PARTIAL_TP_ENABLED and PARTIAL_TP_RATIO <= 0.0
+
+# ── TV BAR-PATH TRAIL (Pine "List of Trades" exit parity) ─────────────────
+# TradingView's broker emulator walks each 30m candle as straight lines
+# (O->H->L->C if the high is nearer the open, else O->L->H->C) and never
+# sees the dips in between. When true (More-points mode only):
+#   * live ticks only test the stop frozen at the last candle close and the
+#     Max SL; they never arm the trail or move best_price;
+#   * at each candle close the candle is replayed on TV's path to arm the
+#     trail, raise best_price, and detect a same-candle trail exit (filled
+#     at market = candle close, the earliest moment it can be known).
+TRAIL_TV_BAR_PATH = os.environ.get("TRAIL_TV_BAR_PATH", "false").lower() == "true"
