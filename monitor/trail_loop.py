@@ -1072,7 +1072,7 @@ class TrailMonitor:
                 return
 
             if not state.max_sl_fired:
-                entry_bar_over = True  # FIX-MAXSL-ENTRY: Max SL live from fill
+                entry_bar_over = (not TRAIL_TV_BAR_PATH) or (not self._entry_bar_is_live())  # FIX-MAXSL-ENTRY (old) / Pine: no stop in entry candle (TV mode)
                 max_thresh = min(atr * MAX_SL_MULT, MAX_SL_POINTS)
                 if entry_bar_over:
                     if is_long and price <= entry_price - max_thresh:
@@ -1145,7 +1145,8 @@ class TrailMonitor:
             act = None
         else:
             armed, best = False, 0.0
-            stop = None if state.max_sl_fired else max_lvl
+            # Original Pine: the entry candle carries ONLY the native trail (no stop).
+            stop = None if (state.max_sl_fired or is_entry_bar) else max_lvl
             act = (sig_close if is_entry_bar else fill) + s * PARTIAL_TP_PTS
 
         def stop_reason():
@@ -2115,7 +2116,7 @@ class TrailMonitor:
 
                 # Max SL check (entry bar exempt)
                 if not state.max_sl_fired:
-                    entry_bar_over = True  # FIX-MAXSL-ENTRY: Max SL live from fill
+                    entry_bar_over = (not TRAIL_TV_BAR_PATH) or (not self._entry_bar_is_live())  # FIX-MAXSL-ENTRY (old) / Pine: no stop in entry candle (TV mode)
                     max_thresh     = min(atr * MAX_SL_MULT, MAX_SL_POINTS)
                     if entry_bar_over:
                         if is_long  and price  <= entry_price - max_thresh:
@@ -2183,7 +2184,7 @@ class TrailMonitor:
 
         # ── 6. Max SL (entry bar exempt) ─────────────────────────────────────
         if not state.max_sl_fired:
-            entry_bar_over = True  # FIX-MAXSL-ENTRY: Max SL live from fill
+            entry_bar_over = (not TRAIL_TV_BAR_PATH) or (not self._entry_bar_is_live())  # FIX-MAXSL-ENTRY (old) / Pine: no stop in entry candle (TV mode)
             max_thresh     = min(atr * MAX_SL_MULT, MAX_SL_POINTS)
             if entry_bar_over:
                 if is_long  and price  <= entry_price - max_thresh:
@@ -2261,7 +2262,7 @@ class TrailMonitor:
 
         # ── 3. Max SL (entry bar exempt) ─────────────────────────────────────
         if not state.max_sl_fired:
-            entry_bar_over = True  # FIX-MAXSL-ENTRY: Max SL live from fill
+            entry_bar_over = (not TRAIL_TV_BAR_PATH) or (not self._entry_bar_is_live())  # FIX-MAXSL-ENTRY (old) / Pine: no stop in entry candle (TV mode)
             max_thresh     = min(atr * MAX_SL_MULT, MAX_SL_POINTS)
             if entry_bar_over:
                 if is_long  and price  <= entry_price - max_thresh:
