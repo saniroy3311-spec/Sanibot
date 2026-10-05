@@ -145,10 +145,21 @@ from config import (
     RUNNER_WIDE_TRIGGER_PTS, RUNNER_MIN_CUSHION_PTS, RUNNER_ATR_MULT,
     LOT_SIZE_BTC,
     PAPER_MODE, DRY_RUN,
+    TRAIL_TV_BAR_PATH,
 )
 from risk.calculator import RiskLevels, TrailState
 
 logger = logging.getLogger("trail_loop")
+
+
+def _tv_bar_path(o: float, h: float, l: float, c: float) -> list:
+    """TradingView broker-emulator intrabar path (Default detalization).
+
+    High nearer the open -> open, high, low, close; otherwise open, low, high, close.
+    """
+    if (h - o) < (o - l):
+        return [o, h, l, c]
+    return [o, l, h, c]
 
 # FIX-5: Maximum offset jump allowed in a single recalibration step.
 # Pre-arm: tightened from 50 → 10 pts to prevent large sudden jumps.
@@ -675,7 +686,7 @@ class TrailMonitor:
             f"activation_pts={_trail_pts(1, risk_levels.atr):.2f}  "
             f"trail_off={_trail_off(1, risk_levels.atr):.2f}  "
             f"activation_price={_activation_price(risk_levels.entry_price, 1, risk_levels.atr, risk_levels.is_long):.2f} "
-            f"recovery={self._is_recovery}"
+            f"recovery={self._is_recovery} tv_bar_path={TRAIL_TV_BAR_PATH}"
         )
 
         if self._is_recovery:
@@ -1020,14 +1031,19 @@ class TrailMonitor:
             return
 
         # Partial is triggered only from authoritative Delta prices.
-        await self._maybe_partial_tp(price, source)
+        # TV-BAR-PATH: arming happens only at candle close (bar replay).
+        if not (TRAIL_TV_BAR_PATH and PARTIAL_ARM_ONLY):
+            await self._maybe_partial_tp(price, source)
 
         is_long = risk.is_long
         entry_price = risk.entry_price
         atr = max(self._current_atr, 1.0)
 
         if self._partial_done and self._runner_mode:
-            self._update_runner_sl(price, update_best=update_best, source="runner_tick")
+            # TV-BAR-PATH: the stop stays frozen at the level set at the last
+            # candle close; ticks only test it.
+            if not (TRAIL_TV_BAR_PATH and PARTIAL_ARM_ONLY):
+                self._update_runner_sl(price, update_best=update_best, source="runner_tick")
             sl_level = state.current_sl + TRAIL_SL_PRE_FIRE_BUFFER if is_long else state.current_sl - TRAIL_SL_PRE_FIRE_BUFFER
             if self._sl_confirmed(price, sl_level, is_long, source=source, trail_armed=True):
                 reason = (
@@ -1071,6 +1087,120 @@ class TrailMonitor:
         if TIME_EXIT_MINUTES > 0 and self._entry_bar_end_ms > 0:
             if int(time.time() * 1000) >= self._entry_bar_end_ms:
                 await self._fire_exit(price, "Time exit (bar close)", source="tick")
+
+    # ── TV-BAR-PATH: candle-close replay (More-points mode) ──────────────────
+    def _tv_set_runner(self, best: float, source: str) -> None:
+        """Arm the More-points trail (0 lots closed), exactly like _arm_trail_only."""
+        state = self._state
+        self._partial_done = True
+        self._runner_mode = True
+        self._partial_closed_qty = 0
+        self._partial_exit_price = 0.0
+        self._partial_realized_pl = 0.0
+        state.trail_armed = True
+        state.be_done = True
+        state.stage = max(int(getattr(state, "stage", 0)), 1)
+        state.best_price = float(best)
+        self._trail_ever_armed = True
+        logger.info(
+            f"[TRAIL-ARM] TV bar-path trail armed at candle close (0 lots closed) | "
+            f"src={source} best={best:.2f} fill={self._risk.entry_price:.2f}"
+        )
+
+    def _tv_bar_close(self, o: float, h: float, l: float, c: float,
+                      is_entry_bar: bool, atr_bar: float) -> None:
+        """Replay the closed candle on TradingView's path (Pine "More points").
+
+        During the candle (orders set at the previous close):
+          entry candle : native trail, activation signal_close +/- TRAIL_START,
+                         no fill floor; bot Max SL from fill.
+          later candles: runner -> stop frozen at max(fill floor, best - cushion);
+                         not runner -> Max SL from fill, activation fill +/- TRAIL_START.
+        At the close (Pine strategy body):
+          mfe from the candle extreme vs fill -> runner; stop = max(fill, best - cushion);
+          not runner and candle touched the initial SL -> close at the close.
+        """
+        risk, state = self._risk, self._state
+        is_long = risk.is_long
+        s = 1.0 if is_long else -1.0
+        F = lambda p: s * p
+        fill = float(risk.entry_price)
+        sig_close = float(getattr(risk, "signal_close", 0.0) or 0.0) or fill
+
+        def fire(price, reason, note):
+            logger.info(
+                f"[TRAIL] TV bar-path exit | reason={reason} {note} "
+                f"market_close={c:.2f} O={o:.2f} H={h:.2f} L={l:.2f} C={c:.2f}"
+            )
+            asyncio.get_running_loop().create_task(
+                self._fire_exit(price, reason, source="tv_bar_path")
+            )
+
+        # ── 1. intrabar replay with the orders live during this candle ───────
+        cushion = max(RUNNER_MIN_CUSHION_PTS, atr_bar * RUNNER_ATR_MULT)
+        max_lvl = fill - s * min(atr_bar * MAX_SL_MULT, MAX_SL_POINTS)
+        runner_at_open = bool(self._partial_done and self._runner_mode)
+        if runner_at_open:
+            armed, best, stop = True, float(state.best_price), float(state.current_sl)
+            act = None
+        else:
+            armed, best = False, 0.0
+            stop = None if state.max_sl_fired else max_lvl
+            act = (sig_close if is_entry_bar else fill) + s * PARTIAL_TP_PTS
+
+        def stop_reason():
+            if not armed:
+                return "Max SL"
+            peak = F(best) - F(fill)
+            return "Runner Trail SL" if peak >= RUNNER_WIDE_TRIGGER_PTS else "Runner Protection SL"
+
+        if stop is not None and F(o) <= F(stop):
+            fire(c, stop_reason(), f"tv_level={o:.2f}(gap at open)")
+            return
+        prev = o
+        for p in _tv_bar_path(o, h, l, c)[1:]:
+            if F(p) > F(prev):
+                if not armed and F(p) >= F(act):
+                    armed, best = True, p
+                elif armed and F(p) > F(best):
+                    best = p
+                if armed:
+                    cand = best - s * cushion
+                    if stop is None or F(cand) > F(stop):
+                        stop = cand
+            elif F(p) < F(prev):
+                if stop is not None and F(p) <= F(stop):
+                    fire(c, stop_reason(), f"tv_level={stop:.2f}")
+                    return
+            prev = p
+
+        # ── 2. Pine strategy body at the close ───────────────────────────────
+        extreme = h if is_long else l
+        mfe_hit = (F(extreme) - F(fill)) >= PARTIAL_TP_PTS
+        if not runner_at_open and (armed or mfe_hit):
+            self._tv_set_runner(extreme, source="tv_bar_close")
+        elif runner_at_open:
+            self._update_best_price(state, extreme, is_long)
+
+        if self._partial_done and self._runner_mode:
+            cushion_next = max(RUNNER_MIN_CUSHION_PTS, self._current_atr * RUNNER_ATR_MULT)
+            lock = self._runner_lock_price()
+            new_sl = lock
+            if self._runner_peak_profit() >= RUNNER_WIDE_TRIGGER_PTS:
+                wide = state.best_price - s * cushion_next
+                new_sl = max(lock, wide) if is_long else min(lock, wide)
+            self._apply_trail_sl(state, risk, new_sl, is_long, source="tv_bar_close")
+            logger.info(
+                f"[TRAIL] TV bar-path frozen stop for next candle | best={state.best_price:.2f} "
+                f"stop={state.current_sl:.2f} cushion={cushion_next:.1f} fill={fill:.2f}"
+            )
+            return
+
+        # Not runner: Pine bar-close initial-SL rule (never on the entry candle).
+        if not is_entry_bar:
+            adverse = l if is_long else h
+            if F(adverse) <= F(state.current_sl):
+                fire(c, "Initial SL (bar)", f"sl_level={state.current_sl:.2f}")
 
     # ── Bar-close update ──────────────────────────────────────────────────────
     def on_bar_close(
@@ -1119,6 +1249,9 @@ class TrailMonitor:
             if bar_open  > 0.0:
                 bar_open = bar_open - self._source_offset
 
+        # TV-BAR-PATH: ATR that was in force DURING this bar (before update).
+        atr_during_bar = self._current_atr if self._current_atr > 0 else current_atr
+
         # ── 1. Update live ATR ───────────────────────────────────────────────
         if current_atr  > 0:
             self._current_atr = current_atr
@@ -1154,6 +1287,11 @@ class TrailMonitor:
                 and dual_profit > atr * BE_MULT
             ):
                 self._activate_be(state, risk, is_long, atr, source="bar_close")
+
+            if TRAIL_TV_BAR_PATH and PARTIAL_ARM_ONLY:
+                o = bar_open if bar_open > 0.0 else bar_close
+                self._tv_bar_close(o, bar_high, bar_low, bar_close, is_entry_bar, atr_during_bar)
+                return
 
             # IMPORTANT: evaluate this bar against the stop that was already
             # active BEFORE using this same bar's favorable extreme to tighten
@@ -2218,6 +2356,9 @@ class TrailMonitor:
             return
 
         is_long = self._risk.is_long
+
+        if TRAIL_TV_BAR_PATH and PARTIAL_ARM_ONLY:
+            return  # TV-BAR-PATH: candle extremes are used only at candle close
 
         if source == "binance":
             if self._source_offset is None:
