@@ -743,7 +743,7 @@ class ShivaSniperBot:
                 _n       = int(_tf_str[:-1])
                 _mult_ms = {"m": 60_000, "h": 3_600_000, "d": 86_400_000}.get(_unit, 60_000)
                 _period_ms      = _n * _mult_ms
-                _next_bar_open  = int(snap.timestamp) + _period_ms
+                _next_bar_open  = ((int(time.time() * 1000) // _period_ms) + 1) * _period_ms  # FIX-ENTRY-BAR-END
                 self._entry_bar_boundary_ms = _next_bar_open  # FIX-9: track for is_entry_bar
                 self._trail_mon.set_entry_bar_boundary(_next_bar_open)
             except Exception as _gge:

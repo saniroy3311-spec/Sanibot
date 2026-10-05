@@ -1056,7 +1056,7 @@ class TrailMonitor:
                 return
 
             if not state.max_sl_fired:
-                entry_bar_over = (time.time() * 1000) >= self._entry_bar_end_ms
+                entry_bar_over = True  # FIX-MAXSL-ENTRY: Max SL live from fill
                 max_thresh = min(atr * MAX_SL_MULT, MAX_SL_POINTS)
                 if entry_bar_over:
                     if is_long and price <= entry_price - max_thresh:
@@ -1977,7 +1977,7 @@ class TrailMonitor:
 
                 # Max SL check (entry bar exempt)
                 if not state.max_sl_fired:
-                    entry_bar_over = (time.time() * 1000)  >= self._entry_bar_end_ms
+                    entry_bar_over = True  # FIX-MAXSL-ENTRY: Max SL live from fill
                     max_thresh     = min(atr * MAX_SL_MULT, MAX_SL_POINTS)
                     if entry_bar_over:
                         if is_long  and price  <= entry_price - max_thresh:
@@ -2045,7 +2045,7 @@ class TrailMonitor:
 
         # ── 6. Max SL (entry bar exempt) ─────────────────────────────────────
         if not state.max_sl_fired:
-            entry_bar_over = (time.time() * 1000)  >= self._entry_bar_end_ms
+            entry_bar_over = True  # FIX-MAXSL-ENTRY: Max SL live from fill
             max_thresh     = min(atr * MAX_SL_MULT, MAX_SL_POINTS)
             if entry_bar_over:
                 if is_long  and price  <= entry_price - max_thresh:
@@ -2123,7 +2123,7 @@ class TrailMonitor:
 
         # ── 3. Max SL (entry bar exempt) ─────────────────────────────────────
         if not state.max_sl_fired:
-            entry_bar_over = (time.time() * 1000)  >= self._entry_bar_end_ms
+            entry_bar_over = True  # FIX-MAXSL-ENTRY: Max SL live from fill
             max_thresh     = min(atr * MAX_SL_MULT, MAX_SL_POINTS)
             if entry_bar_over:
                 if is_long  and price  <= entry_price - max_thresh:
