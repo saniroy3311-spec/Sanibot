@@ -698,3 +698,15 @@ PARTIAL_ARM_ONLY = PARTIAL_TP_ENABLED and PARTIAL_TP_RATIO <= 0.0
 #     trail, raise best_price, and detect a same-candle trail exit (filled
 #     at market = candle close, the earliest moment it can be known).
 TRAIL_TV_BAR_PATH = os.environ.get("TRAIL_TV_BAR_PATH", "false").lower() == "true"
+
+# SANIBOT-ENTRY-MAXSL-POLICY-20261008
+# This flag controls Max SL in the entry candle, NOT trailing/replay.
+# Default true preserves protection in the current live-tick mode.
+_entry_sl_setting = os.environ.get("MAX_SL_ON_ENTRY_CANDLE", "true").strip().lower()
+if _entry_sl_setting not in ("true", "false"):
+    raise ValueError("MAX_SL_ON_ENTRY_CANDLE must be true or false")
+MAX_SL_ON_ENTRY_CANDLE = _entry_sl_setting == "true"
+if not MAX_SL_ON_ENTRY_CANDLE and not (
+    PAPER_MODE is True and DRY_RUN is True and TRADING_MODE == "PAPER"
+):
+    raise ValueError("Entry-candle Max SL may only be disabled for PAPER plus DRY_RUN")

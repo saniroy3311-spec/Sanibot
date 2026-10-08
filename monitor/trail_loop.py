@@ -148,6 +148,7 @@ from config import (
     TRAIL_TV_BAR_PATH,
 )
 from risk.calculator import RiskLevels, TrailState
+from config import MAX_SL_ON_ENTRY_CANDLE
 
 logger = logging.getLogger("trail_loop")
 
@@ -1072,7 +1073,7 @@ class TrailMonitor:
                 return
 
             if not state.max_sl_fired:
-                entry_bar_over = (not TRAIL_TV_BAR_PATH) or (not self._entry_bar_is_live())  # FIX-MAXSL-ENTRY (old) / Pine: no stop in entry candle (TV mode)
+                entry_bar_over = MAX_SL_ON_ENTRY_CANDLE or (not self._entry_bar_is_live())  # SANIBOT-ENTRY-MAXSL-POLICY-20261008
                 max_thresh = min(atr * MAX_SL_MULT, MAX_SL_POINTS)
                 if entry_bar_over:
                     if is_long and price <= entry_price - max_thresh:
@@ -2116,7 +2117,7 @@ class TrailMonitor:
 
                 # Max SL check (entry bar exempt)
                 if not state.max_sl_fired:
-                    entry_bar_over = (not TRAIL_TV_BAR_PATH) or (not self._entry_bar_is_live())  # FIX-MAXSL-ENTRY (old) / Pine: no stop in entry candle (TV mode)
+                    entry_bar_over = MAX_SL_ON_ENTRY_CANDLE or (not self._entry_bar_is_live())  # SANIBOT-ENTRY-MAXSL-POLICY-20261008
                     max_thresh     = min(atr * MAX_SL_MULT, MAX_SL_POINTS)
                     if entry_bar_over:
                         if is_long  and price  <= entry_price - max_thresh:
@@ -2184,7 +2185,7 @@ class TrailMonitor:
 
         # ── 6. Max SL (entry bar exempt) ─────────────────────────────────────
         if not state.max_sl_fired:
-            entry_bar_over = (not TRAIL_TV_BAR_PATH) or (not self._entry_bar_is_live())  # FIX-MAXSL-ENTRY (old) / Pine: no stop in entry candle (TV mode)
+            entry_bar_over = MAX_SL_ON_ENTRY_CANDLE or (not self._entry_bar_is_live())  # SANIBOT-ENTRY-MAXSL-POLICY-20261008
             max_thresh     = min(atr * MAX_SL_MULT, MAX_SL_POINTS)
             if entry_bar_over:
                 if is_long  and price  <= entry_price - max_thresh:
@@ -2262,7 +2263,7 @@ class TrailMonitor:
 
         # ── 3. Max SL (entry bar exempt) ─────────────────────────────────────
         if not state.max_sl_fired:
-            entry_bar_over = (not TRAIL_TV_BAR_PATH) or (not self._entry_bar_is_live())  # FIX-MAXSL-ENTRY (old) / Pine: no stop in entry candle (TV mode)
+            entry_bar_over = MAX_SL_ON_ENTRY_CANDLE or (not self._entry_bar_is_live())  # SANIBOT-ENTRY-MAXSL-POLICY-20261008
             max_thresh     = min(atr * MAX_SL_MULT, MAX_SL_POINTS)
             if entry_bar_over:
                 if is_long  and price  <= entry_price - max_thresh:
