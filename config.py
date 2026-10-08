@@ -699,6 +699,12 @@ PARTIAL_ARM_ONLY = PARTIAL_TP_ENABLED and PARTIAL_TP_RATIO <= 0.0
 #     at market = candle close, the earliest moment it can be known).
 TRAIL_TV_BAR_PATH = os.environ.get("TRAIL_TV_BAR_PATH", "false").lower() == "true"
 
+# SANIBOT-DELTA-ONLY-MORE-POINTS-20261008
+# When enabled, More Points trailing uses Delta prices from activation to exit.
+TRAIL_DELTA_ONLY = (
+    os.environ.get("TRAIL_DELTA_ONLY", "false").strip().lower() == "true"
+)
+
 # SANIBOT-ENTRY-MAXSL-POLICY-20261008
 # This flag controls Max SL in the entry candle, NOT trailing/replay.
 # Default true preserves protection in the current live-tick mode.

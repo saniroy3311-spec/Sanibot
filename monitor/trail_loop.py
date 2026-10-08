@@ -146,6 +146,7 @@ from config import (
     LOT_SIZE_BTC,
     PAPER_MODE, DRY_RUN,
     TRAIL_TV_BAR_PATH,
+    TRAIL_DELTA_ONLY,
 )
 from risk.calculator import RiskLevels, TrailState
 from config import MAX_SL_ON_ENTRY_CANDLE
@@ -1523,6 +1524,18 @@ class TrailMonitor:
         if not self._running or self._exit_fired or price  <= 0:
             return
 
+        # SANIBOT-DELTA-ONLY-MORE-POINTS-20261008
+        # Delta-labelled prices retain their authoritative source throughout
+        # activation, best-price tracking, trailing, and breach detection.
+        if source == "delta":
+            await self._evaluate_tick(price, source="delta")
+            return
+
+        # In the current Pine More Points profile, ignore Binance-derived
+        # trading decisions and wait for the Delta trade/candle stream.
+        if TRAIL_DELTA_ONLY and PARTIAL_ARM_ONLY and source == "binance":
+            return
+
         if source == "binance" and self._risk is not None:
             if self._source_offset is None:
                 # FIX-23 (RECOVERY-OFFSET-POISONING)
@@ -2357,6 +2370,11 @@ class TrailMonitor:
         if not self._running or self._exit_fired or self._state is None or self._risk is None:
             return
 
+        # SANIBOT-DELTA-ONLY-MORE-POINTS-20261008
+        # Do not let Binance candle extremes arm or move the Delta Pine trail.
+        if TRAIL_DELTA_ONLY and PARTIAL_ARM_ONLY and source == "binance":
+            return
+
         is_long = self._risk.is_long
 
         if TRAIL_TV_BAR_PATH and PARTIAL_ARM_ONLY:
@@ -2378,7 +2396,7 @@ class TrailMonitor:
             else:
                 # Default (FIX): evaluate only the favourable extreme
                 favourable = high if is_long else low
-                loop.create_task(self._evaluate_tick(favourable))
+                loop.create_task(self._evaluate_tick(favourable, source=source))
         except RuntimeError:
             pass
 
