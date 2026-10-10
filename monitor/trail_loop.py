@@ -382,12 +382,8 @@ def _trail_off(stage: int, atr: float) -> float:
     _, _, off_mult = TRAIL_STAGES[idx]
     raw     = _pine_tick_distance(atr * off_mult)
     floor   = atr * TRAIL_OFFSET_FLOOR_MULT
-    min_pts = float(os.environ.get("MIN_TRAIL_OFFSET_POINTS", "0.0"))
-    import os
-    # Phase 3: Dynamic Volatility Cushion (absorbs 3m wicks, min 220 pts)
-    dynamic_buffer = max(1.0 * atr, 220.0)
-    min_env_pts = float(os.environ.get("MIN_TRAIL_OFFSET_POINTS", "220.0"))
-    return max(dynamic_buffer, min_env_pts)
+    min_pts = float(os.environ.get("MIN_TRAIL_OFFSET_POINTS", "150.0"))
+    return max(raw, floor, min_pts)
 
 def _activation_price(entry: float, stage: int, atr: float, is_long: bool) -> float:
     """
